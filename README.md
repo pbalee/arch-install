@@ -62,7 +62,3 @@ Beállítja a stabil lightdm kijelzőkezelőt a lightdm-gtk-greeter-rel (megelő
 Telepíti az NVIDIA nyílt keretrendszerű illesztőprogramjait (nvidia-open, nvidia-utils, lib32-nvidia-utils).
 
 Létrehozza a ~/.xprofile fájlt a globális egérkurzor skálázási hibák megelőzésére (XCURSOR_SIZE=24).
-
-Azonnali AUR Telepítés (Google Chrome):
-
-Telepítés után a szkript automatikusan leklónozza a google-chrome AUR receptet és lefordítja a hivatalos Google szerveres forrásból (makepkg -si).
