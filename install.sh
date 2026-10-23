@@ -10,7 +10,7 @@ fi
 echo "Live ISO pacman beállítások frissítése (Color, ILoveCandy, ParallelDownloads, Multilib)..."
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
-if ! grep -q "^[multilib]" /etc/pacman.conf; then
+if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
   echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
 fi
 pacman -Sy
@@ -79,7 +79,7 @@ DISKS=()
 i=1
 while read -r line; do
   DISKS+=("$line")
-  echo "$i)$line"
+  echo "$i) $line"
   ((i++))
 done < <(lsblk -d -n -o NAME,SIZE,MODEL | grep -v "loop")
 
@@ -125,41 +125,38 @@ if [ "$USE_HOME" == "igen" ]; then
   ROOT_SIZE=${ROOT_SIZE:-75}
 fi
 
-# Particionálás végrehajtása parted-del (Sorrend: EFI -> Root -> [Home] -> Swap)
+# Particionálás végrehajtása parted-del (-- használatával a negatív értékek kezeléséhez)
 echo "Particionálás előkészítése..."
 parted --script "$TARGET" mklabel gpt
 
 # 1. EFI partíció (Fix 512MiB)
-parted --script "$TARGET" mkpart "EFI" fat32 1MiB 512MiB
-parted --script "$TARGET" set 1 esp on
+parted --script "$TARGET" -- mkpart "EFI" fat32 1MiB 512MiB
+parted --script "$TARGET" -- set 1 esp on
 
 CUR=512
 
 # 2. Root partíció
-ROOT_END_MB=$(echo "$CUR +$ROOT_SIZE * 1024" | bc)
-parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_END_MB}MiB"
+ROOT_END_MB=$(echo "$CUR + $ROOT_SIZE * 1024" | bc)
+parted --script "$TARGET" -- mkpart "root" ext4 "${CUR}MiB" "${ROOT_END_MB}MiB"
 CUR=$ROOT_END_MB
 
 # 3. Home és/vagy Swap kezelés 100%-osan stabil parted eltolással
 SWAP_MB_VAL=$(echo "$SWAP_SIZE * 1024" | bc)
 
 if [ "$USE_HOME" == "igen" ] && [ "$USE_SWAP" == "igen" ]; then
-    # Home kitölti a gyökér utáni részt a lemez végéig, minusz a swap mérete
-    parted --script "$TARGET" mkpart "home" ext4 "${CUR}MiB" "-${SWAP_MB_VAL}MiB"
-    # Swap a lemez legvégén
-    parted --script "$TARGET" mkpart "swap" linux-swap "-${SWAP_MB_VAL}MiB" "100%"
+    parted --script "$TARGET" -- mkpart "home" ext4 "${CUR}MiB" "-${SWAP_MB_VAL}MiB"
+    parted --script "$TARGET" -- mkpart "swap" linux-swap "-${SWAP_MB_VAL}MiB" "100%"
 elif [ "$USE_HOME" == "igen" ] && [ "$USE_SWAP" != "igen" ]; then
-    parted --script "$TARGET" mkpart "home" ext4 "${CUR}MiB" "100%"
+    parted --script "$TARGET" -- mkpart "home" ext4 "${CUR}MiB" "100%"
 elif [ "$USE_HOME" != "igen" ] && [ "$USE_SWAP" == "igen" ]; then
-    parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "-${SWAP_MB_VAL}MiB"
-    parted --script "$TARGET" mkpart "swap" linux-swap "-${SWAP_MB_VAL}MiB" "100%"
+    parted --script "$TARGET" -- mkpart "root" ext4 "${CUR}MiB" "-${SWAP_MB_VAL}MiB"
+    parted --script "$TARGET" -- mkpart "swap" linux-swap "-${SWAP_MB_VAL}MiB" "100%"
 else
-    # Csak root van, az mehet a végéig
-    parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "100%"
+    parted --script "$TARGET" -- mkpart "root" ext4 "${CUR}MiB" "100%"
 fi
 
-# Partíciónevek dinamikus meghatározása a sorrend alapján
-if [[ "$TARGET" =~ "nvme" ]] \vert{}\vert{} [[ "$TARGET" =~ "mmcblk" ]]; then
+# Partíciónevek dinamikus meghatározása (biztonságos mintaillesztéssel)
+if [[ "$TARGET" == *nvme* ]] || [[ "$TARGET" == *mmcblk* ]]; then
   EFI_PART="${TARGET}p1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
     ROOT_PART="${TARGET}p2"
@@ -282,7 +279,7 @@ KB_EOF
 # Pacman & Makepkg tuning
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
-if ! grep -q "^[multilib]" /etc/pacman.conf; then
+if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
   echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
 fi
 
@@ -317,4 +314,49 @@ if ! grep -q "GRUB_DISABLE_OS_PROBER=true" /etc/default/grub; then
   echo "GRUB_DISABLE_OS_PROBER=true" >> /etc/default/grub
 fi
 
-# -- HA NVIDIA lett választva
+# -- HA NVIDIA lett választva, beírjuk a kernel paramétereket a GRUB-ba --
+if [ "$GPU_CHOICE" == "1" ]; then
+  echo "NVIDIA kernel paraméterek hozzáadása a GRUB-hoz..."
+  sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1 nvidia_drm.fbdev=1"/' /etc/default/grub
+fi
+
+# GRUB telepítés
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Takarító szkript & Aliasok
+cat << 'CLEAN_EOF' > /home/$USERNAME/.arch-clean.sh
+#!/usr/bin/env bash
+set -e
+sudo paccache -r -k 2 || true
+orphans=\$(pacman -Qtdq || true)
+[ -n "\$orphans" ] && sudo pacman -Rns \$orphans
+sudo journalctl --vacuum-time=7d
+echo "✅ Takarítás kész!"
+CLEAN_EOF
+chmod +x /home/$USERNAME/.arch-clean.sh
+chown $USERNAME:$USERNAME /home/$USERNAME/.arch-clean.sh
+
+cat << 'BASHRC_EOF' >> /home/$USERNAME/.bashrc
+alias cl='clear'
+alias e='exit'
+alias y='yay -Syu'
+alias sr='sudo reboot'
+alias in='sudo pacman -S '
+alias rem="\$HOME/.arch-clean.sh"
+BASHRC_EOF
+chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
+
+EOF
+
+# Google Chrome AUR-ból
+echo "Google Chrome telepítése..."
+arch-chroot /mnt /bin/bash -c "
+  cd /tmp
+  sudo -u $USERNAME git clone https://aur.archlinux.org/google-chrome.git
+  cd google-chrome
+  sudo -u $USERNAME makepkg -si --noconfirm
+  rm -rf /tmp/google-chrome
+"
+
+echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
