@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Magyar billentyűzetkiosztás és szép nagy betűtípus a Live telepítő környezetben
-loadkeys hu
-setfont ter-122b
-
 # Ellenőrzés, hogy root-ként fut-e
 if [ "$EUID" -ne 0 ]; then
   echo "Kérlek, futtasd rootként ezt a szkriptet! (sudo bash install.sh)"
@@ -19,7 +15,7 @@ if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
 fi
 pacman -Sy
 
-echo "=== Arch Linux Automata Telepítő (pbalee GPU-választós stabil verzió) ==="
+echo "=== Arch Linux Automata Telepítő (pbalee Pro verzió) ==="
 
 # Alapértelmezett adatok
 read -p "Add meg a gépnevet (hostname) [alapértelmezett: bluelight]: " HOSTNAME
@@ -28,13 +24,45 @@ HOSTNAME=${HOSTNAME:-bluelight}
 read -p "Add meg a felhasználónevet [alapértelmezett: pbalee]: " USERNAME
 USERNAME=${USERNAME:-pbalee}
 
-read -s -p "Add meg a felhasználó jelszavát [alapértelmezett: pbalee]: " PASSWORD
-PASSWORD=${PASSWORD:-pbalee}
-echo
+# Jelszavak bekérése fordítva és kétszer megerősítve
+while true; do
+  read -s -p "Add meg a ROOT jelszavát [alapértelmezett: root]: " ROOTPASSWORD
+  ROOTPASSWORD=${ROOTPASSWORD:-root}
+  echo
+  read -s -p "Add meg a ROOT jelszavát újra: " ROOTPASSWORD2
+  ROOTPASSWORD2=${ROOTPASSWORD2:-root}
+  echo
+  [ "$ROOTPASSWORD" == "$ROOTPASSWORD2" ] && break
+  echo "❌ A jelszavak nem egyeznek! Próbáld újra."
+done
 
-read -s -p "Add meg a root jelszavát [alapértelmezett: root]: " ROOTPASSWORD
-ROOTPASSWORD=${ROOTPASSWORD:-root}
-echo
+while true; do
+  read -s -p "Add meg a felhasználó ($USERNAME) jelszavát [alapértelmezett: pbalee]: " PASSWORD
+  PASSWORD=${PASSWORD:-pbalee}
+  echo
+  read -s -p "Add meg a felhasználó jelszavát újra: " PASSWORD2
+  PASSWORD2=${PASSWORD2:-pbalee}
+  echo
+  [ "$PASSWORD" == "$PASSWORD2" ] && break
+  echo "❌ A jelszavak nem egyeznek! Próbáld újra."
+done
+
+# -- ASZTALI KÖRNYEZET VÁLASZTÁS --
+echo -e "\nMilyen asztali környezetet szeretnél?"
+echo "1) XFCE (Könnyű, gyors, megszokott) [Alapértelmezett]"
+echo "2) GNOME (Modern, elegáns)"
+echo "3) KDE Plasma (Extremül testreszabható)"
+read -p "Válassz (1-3) [alapértelmezett: 1]: " DE_CHOICE
+DE_CHOICE=${DE_CHOICE:-1}
+
+DE_PACKAGES=""
+if [ "$DE_CHOICE" == "1" ]; then
+  DE_PACKAGES="xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 lightdm lightdm-gtk-greeter numlockx"
+elif [ "$DE_CHOICE" == "2" ]; then
+  DE_PACKAGES="xorg-server gnome gdm"
+elif [ "$DE_CHOICE" == "3" ]; then
+  DE_PACKAGES="xorg-server plasma kde-applications sddm"
+fi
 
 # -- GPU VÁLASZTÁS --
 echo -e "\nMilyen grafikus kártya van a gépben?"
@@ -45,12 +73,18 @@ echo "4) Egyéb / Alap (nincs extra driver)"
 read -p "Válassz (1-4) [alapértelmezett: 4]: " GPU_CHOICE
 GPU_CHOICE=${GPU_CHOICE:-4}
 
-# Disk kiválasztása
+# -- DISK KIVÁLASZTÁS SZÁMOKKAL --
 echo -e "\nElérhető lemezek:"
-lsblk -d -n -o NAME,SIZE,MODEL
-read -p "Add meg a telepítési lemez nevét [alapértelmezett: sda]: " DISK
-DISK=${DISK:-sda}
-TARGET="/dev/$DISK"
+mapfile -t DISKS < <(lsblk -d -n -o NAME,SIZE,MODEL | grep -v "loop")
+for i in "${!DISKS[@pliers]}"; do
+  echo "$((i+1))) ${DISKS[$i]}"
+done
+
+read -p "Add meg a lemez sorszámát [alapértelmezett: 1]: " DISK_NUM
+DISK_NUM=${DISK_NUM:-1}
+SELECTED_LINE="${DISKS[$((DISK_NUM-1))]}"
+DISK_NAME=$(echo "$SELECTED_LINE" | awk '{print $1}')
+TARGET="/dev/$DISK_NAME"
 
 echo -e "\nFIGYELEM: A(z) $TARGET lemez teljes tartalma felülíródhat!"
 read -p "Biztosan folytatod? (igen/nem) [alapértelmezett: igen]: " CONFIRM
@@ -64,58 +98,81 @@ fi
 read -p "Szeretnéd csatolni a Games (1TB Ext4) és Downloads (NTFS) extra meghajtókat? (igen/nem) [alapértelmezett: nem]: " ADD_EXTRA
 ADD_EXTRA=${ADD_EXTRA:-nem}
 
-# Particionálás kérdések (Swap & Home)
+# Particionálás kérdések (Swap & Home - mértékegység nélkül)
 read -p "Szeretnél SWAP partíciót? (igen/nem) [alapértelmezett: igen]: " USE_SWAP
 USE_SWAP=${USE_SWAP:-igen}
 
-SWAP_SIZE="4GiB"
+SWAP_SIZE="4"
 if [ "$USE_SWAP" == "igen" ]; then
   TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
   TOTAL_RAM_GB=$((TOTAL_RAM_KB / 1024 / 1024))
   SUGGESTED_SWAP=$((TOTAL_RAM_GB / 2))
   [ "$SUGGESTED_SWAP" -lt 1 ] && SUGGESTED_SWAP=1
   
-  read -p "Add meg a SWAP méretét mértékegységgel (pl. 4GiB, 8GiB) [Ajánlott: ${SUGGESTED_SWAP}GiB]: " SWAP_SIZE
-  SWAP_SIZE=${SWAP_SIZE:-${SUGGESTED_SWAP}GiB}
+  read -p "Add meg a SWAP méretét Gigabájtban (csak a szám) [Ajánlott: ${SUGGESTED_SWAP}]: " SWAP_SIZE
+  SWAP_SIZE=${SWAP_SIZE:-${SUGGESTED_SWAP}}
 fi
 
 read -p "Szeretnél külön /home partíciót? (igen/nem) [alapértelmezett: igen]: " USE_HOME
 USE_HOME=${USE_HOME:-igen}
 
-ROOT_SIZE="75GiB"
+ROOT_SIZE="75"
 if [ "$USE_HOME" == "igen" ]; then
-  read -p "Mekkora legyen a gyökér (root) partíció mérete mértékegységgel (pl. 75GiB)? [alapértelmezett: 75GiB]: " ROOT_SIZE
-  ROOT_SIZE=${ROOT_SIZE:-75GiB}
+  read -p "Mekkora legyen a gyökér (root) partíció Gigabájtban (csak a szám) [alapértelmezett: 75]: " ROOT_SIZE
+  ROOT_SIZE=${ROOT_SIZE:-75}
 fi
 
-# Particionálás végrehajtása parted-del
+# Particionálás végrehajtása parted-del (Sorrend: EFI -> Root -> Home -> Swap)
 echo "Particionálás előkészítése..."
 parted --script "$TARGET" mklabel gpt
 
-# 1. EFI partíció
+# 1. EFI partíció (Fix 512MiB)
 parted --script "$TARGET" mkpart "EFI" fat32 1MiB 512MiB
 parted --script "$TARGET" set 1 esp on
 
-# 2. Swap partíció (ha kérték)
-if [ "$USE_SWAP" == "igen" ]; then
-  SWAP_VAL=$(echo "$SWAP_SIZE" | tr -d 'a-zA-Z')
-  SWAP_END=$(echo 512 + "$SWAP_VAL" * 1024 | bc)
-  parted --script "$TARGET" mkpart "swap" linux-swap 512MiB "${SWAP_END}MiB"
-  ROOT_START="${SWAP_END}MiB"
+CUR=512
+
+# 2. Root partíció
+if [ "$USE_HOME" == "igen" ]; then
+  ROOT_END_MB=$(echo "$CUR + $ROOT_SIZE * 1024" | bc)
+  parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_END_MB}MiB"
+  CUR=$ROOT_END_MB
+  
+  # 3. Home partíció (A Swap előtt, ha van swap, a maradékból levonva, vagy ha nincs swap, a végéig)
+  if [ "$USE_SWAP" == "igen" ]; then
+    HOME_END_MB=$(echo "100% - $SWAP_SIZE * 1024" | bc) # Könnyebb százalékkal vagy számítással
+    # Pontosabb számítás MiB-ben: lemez teljes méretének lekérdezése
+    DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB')
+    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_SIZE * 1024" | bc)
+    
+    parted --script "$TARGET" mkpart "home" ext4 "${CUR}MiB" "${SWAP_START_MB}MiB"
+    parted --script "$TARGET" mkpart "swap" linux-swap "${SWAP_START_MB}MiB" "100%"
+  else
+    parted --script "$TARGET" mkpart "home" ext4 "${CUR}MiB" "100%"
+  fi
 else
-  ROOT_START="512MiB"
+  # Nincs külön Home
+  if [ "$USE_SWAP" == "igen" ]; then
+    DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB')
+    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_SIZE * 1024" | bc)
+    
+    parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${SWAP_START_MB}MiB"
+    parted --script "$TARGET" mkpart "swap" linux-swap "${SWAP_START_MB}MiB" "100%"
+  else
+    parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "100%"
+  fi
 fi
 
-# Partíciónevek meghatározása dinamikusan
+# Partíciónevek dinamikus meghatározása a sorrend alapján (EFI -> Root -> Home -> Swap)
 if [[ "$TARGET" =~ "nvme" ]] || [[ "$TARGET" =~ "mmcblk" ]]; then
   EFI_PART="${TARGET}p1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
-    SWAP_PART="${TARGET}p2"
-    ROOT_PART="${TARGET}p3"
-    HOME_PART="${TARGET}p4"
+    ROOT_PART="${TARGET}p2"
+    HOME_PART="${TARGET}p3"
+    SWAP_PART="${TARGET}p4"
   elif [ "$USE_SWAP" == "igen" ]; then
-    SWAP_PART="${TARGET}p2"
-    ROOT_PART="${TARGET}p3"
+    ROOT_PART="${TARGET}p2"
+    SWAP_PART="${TARGET}p3"
   elif [ "$USE_HOME" == "igen" ]; then
     ROOT_PART="${TARGET}p2"
     HOME_PART="${TARGET}p3"
@@ -125,12 +182,12 @@ if [[ "$TARGET" =~ "nvme" ]] || [[ "$TARGET" =~ "mmcblk" ]]; then
 else
   EFI_PART="${TARGET}1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
-    SWAP_PART="${TARGET}2"
-    ROOT_PART="${TARGET}3"
-    HOME_PART="${TARGET}4"
+    ROOT_PART="${TARGET}2"
+    HOME_PART="${TARGET}3"
+    SWAP_PART="${TARGET}4"
   elif [ "$USE_SWAP" == "igen" ]; then
-    SWAP_PART="${TARGET}2"
-    ROOT_PART="${TARGET}3"
+    ROOT_PART="${TARGET}2"
+    SWAP_PART="${TARGET}3"
   elif [ "$USE_HOME" == "igen" ]; then
     ROOT_PART="${TARGET}2"
     HOME_PART="${TARGET}3"
@@ -139,30 +196,18 @@ else
   fi
 fi
 
-# 3. Root és Home partíciók létrehozása
-if [ "$USE_HOME" == "igen" ]; then
-  ROOT_VAL=$(echo "$ROOT_SIZE" | tr -d 'a-zA-Z')
-  ROOT_START_NUM=$(echo "$ROOT_START" | tr -d 'a-zA-Z')
-  ROOT_END_MB=$(echo "$ROOT_START_NUM" + "$ROOT_VAL" * 1024 | bc)
-  
-  parted --script "$TARGET" mkpart "root" ext4 "$ROOT_START" "${ROOT_END_MB}MiB"
-  parted --script "$TARGET" mkpart "home" ext4 "${ROOT_END_MB}MiB" 100%
-else
-  parted --script "$TARGET" mkpart "root" ext4 "$ROOT_START" 100%
-fi
-
 # Formázások és SWAP bekapcsolás
 echo "Formázás..."
 mkfs.fat -F32 "$EFI_PART"
 mkfs.ext4 -F "$ROOT_PART"
 
+if [ "$USE_HOME" == "igen" ]; then
+  mkfs.ext4 -F "$HOME_PART"
+fi
+
 if [ "$USE_SWAP" == "igen" ]; then
   mkswap "$SWAP_PART"
   swapon "$SWAP_PART"
-fi
-
-if [ "$USE_HOME" == "igen" ]; then
-  mkfs.ext4 -F "$HOME_PART"
 fi
 
 # Felcsatolások
@@ -190,7 +235,7 @@ fi
 echo "Csomagok telepítése..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
-  grub efibootmgr xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 lightdm lightdm-gtk-greeter numlockx \
+  grub efibootmgr $DE_PACKAGES \
   pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol \
   $GPU_PACKAGES \
   firefox firefox-i18n-hu libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu \
@@ -240,15 +285,21 @@ sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j\$(nproc)"/' /etc/makepkg.conf
 sed -i 's/^COMPRESSZST=(zstd -c -z -q -)/COMPRESSZST=(zstd -c -z -q --threads=0 -)/' /etc/makepkg.conf
 sed -i 's/#BUILDDIR=\/tmp\/build/BUILDDIR=\/tmp\/build/' /etc/makepkg.conf
 
-# LightDM NumLock
-if grep -q "\[Seat:\*\]" /etc/lightdm/lightdm.conf; then
-  sed -i '/\[Seat:\*\]/a display-setup-script=numlockx on' /etc/lightdm/lightdm.conf
-else
-  echo -e "\n[Seat:*]\ndisplay-setup-script=numlockx on" >> /etc/lightdm/lightdm.conf
+# Display Manager kezelés (LightDM vagy GDM vagy SDDM)
+if [ "$DE_CHOICE" == "1" ]; then
+  systemctl enable lightdm
+  if grep -q "\[Seat:\*\]" /etc/lightdm/lightdm.conf; then
+    sed -i '/\[Seat:\*\]/a display-setup-script=numlockx on' /etc/lightdm/lightdm.conf
+  else
+    echo -e "\n[Seat:*]\ndisplay-setup-script=numlockx on" >> /etc/lightdm/lightdm.conf
+  fi
+elif [ "$DE_CHOICE" == "2" ]; then
+  systemctl enable gdm
+elif [ "$DE_CHOICE" == "3" ]; then
+  systemctl enable sddm
 fi
 
 systemctl enable NetworkManager
-systemctl enable lightdm
 
 # Felhasználók
 echo "root:$ROOTPASSWORD" | chpasswd
