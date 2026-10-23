@@ -49,7 +49,7 @@ done
 
 # -- ASZTALI KÖRNYEZET VÁLASZTÁS --
 echo -e "\nMilyen asztali környezetet szeretnél?"
-echo "1) XFCE (Könnyű, gyors, megszokott) [Alapértelmezett]"
+echo "1) XFCE (Könnyű, gyors, megszokott + Whisker menü) [Alapértelmezett]"
 echo "2) GNOME (Modern, elegáns)"
 echo "3) KDE Plasma (Extremül testreszabható)"
 read -p "Válassz (1-3) [alapértelmezett: 1]: " DE_CHOICE
@@ -57,7 +57,8 @@ DE_CHOICE=${DE_CHOICE:-1}
 
 DE_PACKAGES=""
 if [ "$DE_CHOICE" == "1" ]; then
-  DE_PACKAGES="xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 lightdm lightdm-gtk-greeter numlockx"
+  # Whisker menü beletéve a csomagok közé
+  DE_PACKAGES="xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 xfce4-whiskermenu-plugin lightdm lightdm-gtk-greeter numlockx"
 elif [ "$DE_CHOICE" == "2" ]; then
   DE_PACKAGES="xorg-server gnome gdm"
 elif [ "$DE_CHOICE" == "3" ]; then
@@ -207,7 +208,7 @@ GPU_PACKAGES=""
 [ "$GPU_CHOICE" == "2" ] && GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon"
 [ "$GPU_CHOICE" == "3" ] && GPU_PACKAGES="mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel"
 
-# Csomagok telepítése (VirtualBox-szal)
+# Csomagok telepítése (VirtualBox & Whisker-rel)
 echo "Csomagok telepítése..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
@@ -238,7 +239,7 @@ UUID=7460557760554152 /Download ntfs3 defaults,noatime,uid=1000,gid=1000,umask=0
 EOF
 fi
 
-# Chroot konfiguráció (jelszavak automatikus átadásával!)
+# Chroot konfiguráció
 arch-chroot /mnt /bin/bash <<EOF
 
 ln -sf /usr/share/zoneinfo/Europe/Budapest /etc/localtime
@@ -330,8 +331,8 @@ chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 EOF
 
-# Google Chrome és RustDesk AUR telepítés biztonságos build fiókkal
-echo "Google Chrome és RustDesk telepítése az AUR-ból..."
+# Google Chrome, RustDesk AUR telepítés, valamint az XFCE profil letöltése és visszaállítása
+echo "Google Chrome, RustDesk telepítése az AUR-ból, valamint XFCE profil visszatöltése..."
 arch-chroot /mnt /bin/bash -c "
   useradd -m -s /bin/bash builder
   echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers.d/builder
@@ -341,6 +342,12 @@ arch-chroot /mnt /bin/bash -c "
   
   userdel -r builder
   rm -f /etc/sudoers.d/builder
+
+  # XFCE profil letöltése a GitHubodról és kicsomagolása a felhasználó home mappájába
+  wget -O /home/$USERNAME/xfce-backup.tar.gz https://raw.githubusercontent.com/pbalee/arch-install/main/xfce-backup.tar.gz
+  tar -xzvf /home/$USERNAME/xfce-backup.tar.gz -C /home/$USERNAME/
+  rm -f /home/$USERNAME/xfce-backup.tar.gz
+  chown -R $USERNAME:$USERNAME /home/$USERNAME/.config
 "
 
 echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
