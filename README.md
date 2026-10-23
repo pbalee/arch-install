@@ -26,7 +26,7 @@ ping -c 3 archlinux.org
 
 Indítsd el a szkriptet közvetlenül a GitHub fiókodból a következő paranccsal (cseréld ki a FELHASZNÁLÓNEVED-et a saját GitHub nevedre):
 
-bash <(curl -s https://raw.githubusercontent.com/FELHASZNÁLÓNEVED/arch-install/main/install.sh)
+bash <(curl -s https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 
 
 Mit csinál a szkript automatikusan?
