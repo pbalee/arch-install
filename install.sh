@@ -98,17 +98,17 @@ if [ "$HAS_HOME" == "igen" ] && [ -n "$HOME_PART" ]; then
   mount "$HOME_PART" /mnt/home
 fi
 
-# 2. Alap- és felhasználói csomagok telepítése (pacstrap)
+# 2. Alap- és felhasználói csomagok telepítése (pacstrap) - JAVÍTVA (nincsenek csoportok és AUR csomagok)
 echo "Csomagok telepítése a megadott szoftverlista alapján..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
-  grub efibootmgr xorg-server xfce4 xfce4-goodies lightdm lightdm-gtk-greeter numlockx \
+  grub efibootmgr xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 lightdm lightdm-gtk-greeter numlockx \
   pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol \
   nvidia-open nvidia-settings nvidia-utils lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl \
   firefox firefox-i18n-hu libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu \
   mc mousepad thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman file-roller 7zip unrar unzip \
   keepassxc qbittorrent audacious parole ristretto galculator \
-  lutris gamemode gamescope protonup-qt mangohud wine wine-gecko wine-mono \
+  lutris gamemode gamescope mangohud wine wine-gecko wine-mono \
   lib32-freetype2 lib32-gamemode lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader \
   udisks2 gvfs gvfs-afc gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb ntfs-3g exfatprogs dosfstools \
   flatpak pacman-contrib reflector htop glances duf inxi lsb-release sudo
@@ -260,14 +260,22 @@ chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 EOF
 
-# 5. Google Chrome telepítése AUR-ból kézi makepkg módszerrel
-echo "Google Chrome telepítése hivatalos AUR PKGBUILD módszerrel..."
+# 5. AUR csomagok (Google Chrome és ProtonUp-Qt) telepítése kézi makepkg módszerrel
+echo "AUR csomagok (Google Chrome, ProtonUp-Qt) telepítése..."
 arch-chroot /mnt /bin/bash -c "
+  # Google Chrome
   cd /tmp
   sudo -u $USERNAME git clone https://aur.archlinux.org/google-chrome.git
   cd google-chrome
   sudo -u $USERNAME makepkg -si --noconfirm
-  rm -rf /tmp/google-chrome
+  cd /tmp && rm -rf google-chrome
+
+  # ProtonUp-Qt
+  cd /tmp
+  sudo -u $USERNAME git clone https://aur.archlinux.org/protonup-qt.git
+  cd protonup-qt
+  sudo -u $USERNAME makepkg -si --noconfirm
+  cd /tmp && rm -rf protonup-qt
 "
 
 echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
