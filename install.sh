@@ -7,7 +7,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 0. A Live ISO pacman.conf optimalizálása
-echo "Live ISO pacman beállítások frissítése (Color, ILoveCandy, ParallelDownloads, Multilib)..."
+echo "Live ISO pacman beállítások frissítése..."
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
 if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
@@ -15,7 +15,7 @@ if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
 fi
 pacman -Sy
 
-echo "=== Arch Linux Automata Telepítő (pbalee Pro verzió) ==="
+echo "=== Arch Linux Automata Telepítő (pbalee Éles verzió) ==="
 
 # Alapértelmezett adatok
 read -p "Add meg a gépnevet (hostname) [alapértelmezett: bluelight]: " HOSTNAME
@@ -24,7 +24,7 @@ HOSTNAME=${HOSTNAME:-bluelight}
 read -p "Add meg a felhasználónevet [alapértelmezett: pbalee]: " USERNAME
 USERNAME=${USERNAME:-pbalee}
 
-# Jelszavak bekérése fordítva és kétszer megerősítve
+# Jelszavak bekérése
 while true; do
   read -s -p "Add meg a ROOT jelszavát [alapértelmezett: root]: " ROOTPASSWORD
   ROOTPASSWORD=${ROOTPASSWORD:-root}
@@ -89,7 +89,7 @@ SELECTED_LINE="${DISKS[$((DISK_NUM-1))]}"
 DISK_NAME=$(echo "$SELECTED_LINE" | awk '{print $1}')
 TARGET="/dev/$DISK_NAME"
 
-echo -e "\nFIGYELEM: A(z) $TARGET lemez teljes tartalma felülíródhat!"
+echo -e "\n⚠️ FIGYELEM ÉLES FUTTATÁS: A(z) $TARGET lemez teljes tartalma felülíródhat!"
 read -p "Biztosan folytatod? (igen/nem) [alapértelmezett: igen]: " CONFIRM
 CONFIRM=${CONFIRM:-igen}
 if [ "$CONFIRM" != "igen" ]; then
@@ -101,7 +101,7 @@ fi
 read -p "Szeretnéd csatolni a Games (1TB Ext4) és Downloads (NTFS) extra meghajtókat? (igen/nem) [alapértelmezett: nem]: " ADD_EXTRA
 ADD_EXTRA=${ADD_EXTRA:-nem}
 
-# Particionálás kérdések (Swap & Home - mértékegység nélkül)
+# Particionálás kérdések (Swap & Home)
 read -p "Szeretnél SWAP partíciót? (igen/nem) [alapértelmezett: igen]: " USE_SWAP
 USE_SWAP=${USE_SWAP:-igen}
 
@@ -112,7 +112,7 @@ if [ "$USE_SWAP" == "igen" ]; then
   SUGGESTED_SWAP=$((TOTAL_RAM_GB / 2))
   [ "$SUGGESTED_SWAP" -lt 1 ] && SUGGESTED_SWAP=1
   
-  read -p "Add meg a SWAP méretét Gigabájtban (csak a szám) [Ajánlott: ${SUGGESTED_SWAP}]: " SWAP_SIZE
+  read -p "Add meg a SWAP méretét Gigabájtban [Ajánlott: ${SUGGESTED_SWAP}]: " SWAP_SIZE
   SWAP_SIZE=${SWAP_SIZE:-${SUGGESTED_SWAP}}
 fi
 
@@ -121,30 +121,25 @@ USE_HOME=${USE_HOME:-igen}
 
 ROOT_SIZE="75"
 if [ "$USE_HOME" == "igen" ]; then
-  read -p "Mekkora legyen a gyökér (root) partíció Gigabájtban (csak a szám) [alapértelmezett: 75]: " ROOT_SIZE
+  read -p "Mekkora legyen a gyökér (root) partíció Gigabájtban [alapértelmezett: 75]: " ROOT_SIZE
   ROOT_SIZE=${ROOT_SIZE:-75}
 fi
 
-# Particionálás előkészítése és pontos méretszámítás kernel sysfs-ből
+# Particionálás előkészítése
 echo "Particionálás előkészítése..."
 parted --script "$TARGET" mklabel gpt
 
-# Teljes lemezméret Megabájtban (1 szektor = 512 bájt, szóval szektorok / 2048 = MB)
 SECTORS=$(cat /sys/block/$DISK_NAME/size)
 DISK_SIZE_MB=$((SECTORS / 2048))
 
-# 1. EFI partíció (1MiB - 512MiB)
 parted --script "$TARGET" mkpart "EFI" fat32 1MiB 512MiB
 parted --script "$TARGET" set 1 esp on
 
 CUR=512
-
-# 2. Root partíció
 ROOT_END_MB=$((CUR + ROOT_SIZE * 1024))
 parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_END_MB}MiB"
 CUR=$ROOT_END_MB
 
-# 3. Home és/vagy Swap pozíciók tiszta pozitív számokkal
 SWAP_MB_VAL=$((SWAP_SIZE * 1024))
 
 if [ "$USE_HOME" == "igen" ] && [ "$USE_SWAP" == "igen" ]; then
@@ -161,63 +156,36 @@ else
     parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "100%"
 fi
 
-# Partíciónevek dinamikus meghatározása (biztonságos feltételekkel)
-if [[ "$TARGET" == *nvme* ]]; then
+# Partíciónevek
+if [[ "$TARGET" == *nvme* ]] || [[ "$TARGET" == *mmcblk* ]]; then
   EFI_PART="${TARGET}p1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
-    ROOT_PART="${TARGET}p2"
-    HOME_PART="${TARGET}p3"
-    SWAP_PART="${TARGET}p4"
+    ROOT_PART="${TARGET}p2"; HOME_PART="${TARGET}p3"; SWAP_PART="${TARGET}p4"
   elif [ "$USE_SWAP" == "igen" ]; then
-    ROOT_PART="${TARGET}p2"
-    SWAP_PART="${TARGET}p3"
+    ROOT_PART="${TARGET}p2"; SWAP_PART="${TARGET}p3"
   elif [ "$USE_HOME" == "igen" ]; then
-    ROOT_PART="${TARGET}p2"
-    HOME_PART="${TARGET}p3"
-  else
-    ROOT_PART="${TARGET}p2"
-  fi
-elif [[ "$TARGET" == *mmcblk* ]]; then
-  EFI_PART="${TARGET}p1"
-  if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
-    ROOT_PART="${TARGET}p2"
-    HOME_PART="${TARGET}p3"
-    SWAP_PART="${TARGET}p4"
-  elif [ "$USE_SWAP" == "igen" ]; then
-    ROOT_PART="${TARGET}p2"
-    SWAP_PART="${TARGET}p3"
-  elif [ "$USE_HOME" == "igen" ]; then
-    ROOT_PART="${TARGET}p2"
-    HOME_PART="${TARGET}p3"
+    ROOT_PART="${TARGET}p2"; HOME_PART="${TARGET}p3"
   else
     ROOT_PART="${TARGET}p2"
   fi
 else
   EFI_PART="${TARGET}1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
-    ROOT_PART="${TARGET}2"
-    HOME_PART="${TARGET}3"
-    SWAP_PART="${TARGET}4"
+    ROOT_PART="${TARGET}2"; HOME_PART="${TARGET}3"; SWAP_PART="${TARGET}4"
   elif [ "$USE_SWAP" == "igen" ]; then
-    ROOT_PART="${TARGET}2"
-    SWAP_PART="${TARGET}3"
+    ROOT_PART="${TARGET}2"; SWAP_PART="${TARGET}3"
   elif [ "$USE_HOME" == "igen" ]; then
-    ROOT_PART="${TARGET}2"
-    HOME_PART="${TARGET}3"
+    ROOT_PART="${TARGET}2"; HOME_PART="${TARGET}3"
   else
     ROOT_PART="${TARGET}2"
   fi
 fi
 
-# Formázások és SWAP bekapcsolás
+# Formázások
 echo "Formázás..."
 mkfs.fat -F32 "$EFI_PART"
 mkfs.ext4 -F "$ROOT_PART"
-
-if [ "$USE_HOME" == "igen" ]; then
-  mkfs.ext4 -F "$HOME_PART"
-fi
-
+[ "$USE_HOME" == "igen" ] && mkfs.ext4 -F "$HOME_PART"
 if [ "$USE_SWAP" == "igen" ]; then
   mkswap "$SWAP_PART"
   swapon "$SWAP_PART"
@@ -228,27 +196,23 @@ echo "Fájlrendszer felcsatolása..."
 mount "$ROOT_PART" /mnt
 mkdir -p /mnt/boot
 mount "$EFI_PART" /mnt/boot
-
 if [ "$USE_HOME" == "igen" ]; then
   mkdir -p /mnt/home
   mount "$HOME_PART" /mnt/home
 fi
 
-# GPU alapú csomagok összeállítása
+# GPU csomagok
 GPU_PACKAGES=""
-if [ "$GPU_CHOICE" == "1" ]; then
-  GPU_PACKAGES="nvidia-open nvidia-settings nvidia-utils lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl"
-elif [ "$GPU_CHOICE" == "2" ]; then
-  GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon"
-elif [ "$GPU_CHOICE" == "3" ]; then
-  GPU_PACKAGES="mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel"
-fi
+[ "$GPU_CHOICE" == "1" ] && GPU_PACKAGES="nvidia-open nvidia-settings nvidia-utils lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl"
+[ "$GPU_CHOICE" == "2" ] && GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon"
+[ "$GPU_CHOICE" == "3" ] && GPU_PACKAGES="mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel"
 
-# Csomagok telepítése (pacstrap)
+# Csomagok telepítése (VirtualBox-szal)
 echo "Csomagok telepítése..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
   grub efibootmgr $DE_PACKAGES gnome-disk-utility \
+  virtualbox virtualbox-host-dkms \
   pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol \
   $GPU_PACKAGES \
   firefox firefox-i18n-hu libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu \
@@ -259,7 +223,7 @@ pacstrap -K /mnt \
   udisks2 gvfs gvfs-afc gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb ntfs-3g exfatprogs dosfstools \
   flatpak pacman-contrib reflector htop glances duf inxi lsb-release sudo
 
-# Fstab generálása
+# Fstab
 genfstab -U /mnt >> /mnt/etc/fstab
 
 if [ "$ADD_EXTRA" == "igen" ]; then
@@ -274,7 +238,7 @@ UUID=7460557760554152 /Download ntfs3 defaults,noatime,uid=1000,gid=1000,umask=0
 EOF
 fi
 
-# Chroot konfig
+# Chroot konfiguráció (jelszavak automatikus átadásával!)
 arch-chroot /mnt /bin/bash <<EOF
 
 ln -sf /usr/share/zoneinfo/Europe/Budapest /etc/localtime
@@ -287,7 +251,6 @@ echo "LANG=hu_HU.UTF-8" > /etc/locale.conf
 
 echo "$HOSTNAME" > /etc/hostname
 
-# -- GLOBÁLIS MAGYAR BILLENTYŰZETKIOSZTÁS --
 mkdir -p /etc/X11/xorg.conf.d
 cat << 'KB_EOF' > /etc/X11/xorg.conf.d/00-keyboard.conf
 Section "InputClass"
@@ -297,7 +260,6 @@ Section "InputClass"
 EndSection
 KB_EOF
 
-# Pacman & Makepkg tuning
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
 if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
@@ -308,7 +270,6 @@ sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j\$(nproc)"/' /etc/makepkg.conf
 sed -i 's/^COMPRESSZST=(zstd -c -z -q -)/COMPRESSZST=(zstd -c -z -q --threads=0 -)/' /etc/makepkg.conf
 sed -i 's/#BUILDDIR=\/tmp\/build/BUILDDIR=\/tmp\/build/' /etc/makepkg.conf
 
-# Display Manager kezelés
 if [ "$DE_CHOICE" == "1" ]; then
   systemctl enable lightdm
   if grep -q "\[Seat:\*\]" /etc/lightdm/lightdm.conf; then
@@ -324,24 +285,23 @@ fi
 
 systemctl enable NetworkManager
 
-# Felhasználók
+# VirtualBox modul & csoport
+echo "vboxdrv" > /etc/modules-load.d/virtualbox.conf
+
+# Felhasználók létrehozása automatikus jelszóval
 echo "root:$ROOTPASSWORD" | chpasswd
-useradd -m -G wheel,storage,power,input -s /bin/bash $USERNAME
+useradd -m -G wheel,storage,power,input,vboxusers -s /bin/bash $USERNAME
 echo "$USERNAME:$PASSWORD" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 
-# -- GRUB beállítások: os-prober tiltás --
 if ! grep -q "GRUB_DISABLE_OS_PROBER=true" /etc/default/grub; then
   echo "GRUB_DISABLE_OS_PROBER=true" >> /etc/default/grub
 fi
 
-# -- HA NVIDIA lett választva, beírjuk a kernel paramétereket a GRUB-ba --
 if [ "$GPU_CHOICE" == "1" ]; then
-  echo "NVIDIA kernel paraméterek hozzáadása a GRUB-hoz..."
   sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1 nvidia_drm.fbdev=1"/' /etc/default/grub
 fi
 
-# GRUB telepítés
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
 grub-mkconfig -o /boot/grub/grub.cfg
 
@@ -370,14 +330,17 @@ chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 EOF
 
-# Google Chrome AUR-ból
-echo "Google Chrome telepítése..."
+# Google Chrome és RustDesk AUR telepítés biztonságos build fiókkal
+echo "Google Chrome és RustDesk telepítése az AUR-ból..."
 arch-chroot /mnt /bin/bash -c "
-  cd /tmp
-  sudo -u $USERNAME git clone https://aur.archlinux.org/google-chrome.git
-  cd google-chrome
-  sudo -u $USERNAME makepkg -si --noconfirm
-  rm -rf /tmp/google-chrome
+  useradd -m -s /bin/bash builder
+  echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers.d/builder
+  
+  su - builder -c 'cd /tmp && git clone https://aur.archlinux.org/google-chrome.git && cd google-chrome && makepkg -si --noconfirm'
+  su - builder -c 'cd /tmp && git clone https://aur.archlinux.org/rustdesk-bin.git && cd rustdesk-bin && makepkg -si --noconfirm'
+  
+  userdel -r builder
+  rm -f /etc/sudoers.d/builder
 "
 
 echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
