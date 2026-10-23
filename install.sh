@@ -14,7 +14,7 @@ fi
 echo "Live ISO pacman beállítások frissítése (Color, ILoveCandy, ParallelDownloads, Multilib)..."
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
-if ! grep -q "^[multilib]" /etc/pacman.conf; then
+if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
   echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
 fi
 pacman -Sy
@@ -88,7 +88,7 @@ if [ "$USE_HOME" == "igen" ]; then
   ROOT_SIZE=${ROOT_SIZE:-75GiB}
 fi
 
-# Particionálás végrehajtása parted-del (Biztos GPT séma és stabil MiB alapú eltolások)
+# Particionálás végrehajtása parted-del
 echo "Particionálás előkészítése..."
 parted --script "$TARGET" mklabel gpt
 
@@ -107,7 +107,7 @@ else
 fi
 
 # Partíciónevek meghatározása dinamikusan
-if [[ "$TARGET" =~ "nvme" ]] \vert{}\vert{} [[ "$TARGET" =~ "mmcblk" ]]; then
+if [[ "$TARGET" =~ "nvme" ]] || [[ "$TARGET" =~ "mmcblk" ]]; then
   EFI_PART="${TARGET}p1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
     SWAP_PART="${TARGET}p2"
@@ -229,4 +229,81 @@ echo "LANG=hu_HU.UTF-8" > /etc/locale.conf
 
 echo "$HOSTNAME" > /etc/hostname
 
-# Pacman
+# Pacman & Makepkg tuning
+sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
+sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
+if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
+  echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+fi
+
+sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j\$(nproc)"/' /etc/makepkg.conf
+sed -i 's/^COMPRESSZST=(zstd -c -z -q -)/COMPRESSZST=(zstd -c -z -q --threads=0 -)/' /etc/makepkg.conf
+sed -i 's/#BUILDDIR=\/tmp\/build/BUILDDIR=\/tmp\/build/' /etc/makepkg.conf
+
+# LightDM NumLock
+if grep -q "\[Seat:\*\]" /etc/lightdm/lightdm.conf; then
+  sed -i '/\[Seat:\*\]/a display-setup-script=numlockx on' /etc/lightdm/lightdm.conf
+else
+  echo -e "\n[Seat:*]\ndisplay-setup-script=numlockx on" >> /etc/lightdm/lightdm.conf
+fi
+
+systemctl enable NetworkManager
+systemctl enable lightdm
+
+# Felhasználók
+echo "root:$ROOTPASSWORD" | chpasswd
+useradd -m -G wheel,storage,power,input -s /bin/bash $USERNAME
+echo "$USERNAME:$PASSWORD" | chpasswd
+echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
+
+# -- GRUB beállítások: os-prober tiltás --
+if ! grep -q "GRUB_DISABLE_OS_PROBER=true" /etc/default/grub; then
+  echo "GRUB_DISABLE_OS_PROBER=true" >> /etc/default/grub
+fi
+
+# -- HA NVIDIA lett választva, beírjuk a kernel paramétereket a GRUB-ba --
+if [ "$GPU_CHOICE" == "1" ]; then
+  echo "NVIDIA kernel paraméterek hozzáadása a GRUB-hoz..."
+  sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1 nvidia_drm.fbdev=1"/' /etc/default/grub
+fi
+
+# GRUB telepítés
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Takarító szkript & Aliasok
+cat << 'CLEAN_EOF' > /home/$USERNAME/.arch-clean.sh
+#!/usr/bin/env bash
+set -e
+sudo paccache -r -k 2 || true
+orphans=\$(pacman -Qtdq || true)
+[ -n "\$orphans" ] && sudo pacman -Rns \$orphans
+sudo journalctl --vacuum-time=7d
+echo "✅ Takarítás kész!"
+CLEAN_EOF
+chmod +x /home/$USERNAME/.arch-clean.sh
+chown $USERNAME:$USERNAME /home/$USERNAME/.arch-clean.sh
+
+cat << 'BASHRC_EOF' >> /home/$USERNAME/.bashrc
+alias cl='clear'
+alias e='exit'
+alias y='yay -Syu'
+alias sr='sudo reboot'
+alias in='sudo pacman -S '
+alias rem="\$HOME/.arch-clean.sh"
+BASHRC_EOF
+chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
+
+EOF
+
+# Google Chrome AUR-ból
+echo "Google Chrome telepítése..."
+arch-chroot /mnt /bin/bash -c "
+  cd /tmp
+  sudo -u $USERNAME git clone https://aur.archlinux.org/google-chrome.git
+  cd google-chrome
+  sudo -u $USERNAME makepkg -si --noconfirm
+  rm -rf /tmp/google-chrome
+"
+
+echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
