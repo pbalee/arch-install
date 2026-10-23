@@ -14,12 +14,12 @@ fi
 echo "Live ISO pacman beállítások frissítése (Color, ILoveCandy, ParallelDownloads, Multilib)..."
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
-if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
+if ! grep -q "^[multilib]" /etc/pacman.conf; then
   echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
 fi
 pacman -Sy
 
-echo "=== Arch Linux Automata Telepítő (pbalee GPU-választós verzió) ==="
+echo "=== Arch Linux Automata Telepítő (pbalee GPU-választós stabil verzió) ==="
 
 # Alapértelmezett adatok
 read -p "Add meg a gépnevet (hostname) [alapértelmezett: bluelight]: " HOSTNAME
@@ -60,7 +60,7 @@ if [ "$CONFIRM" != "igen" ]; then
   exit 1
 fi
 
-# Extra meghajtók opció (Kérdezzük meg ITT ELEGEN, mielőtt a partícionálás elindul!)
+# Extra meghajtók opció
 read -p "Szeretnéd csatolni a Games (1TB Ext4) és Downloads (NTFS) extra meghajtókat? (igen/nem) [alapértelmezett: nem]: " ADD_EXTRA
 ADD_EXTRA=${ADD_EXTRA:-nem}
 
@@ -88,38 +88,103 @@ if [ "$USE_HOME" == "igen" ]; then
   ROOT_SIZE=${ROOT_SIZE:-75GiB}
 fi
 
-# Particionálás végrehajtása parted-del (Biztos GPT séma)
+# Particionálás végrehajtása parted-del (Biztos GPT séma, százalékok vagy fix méretek helyett pontos eltolásokkal)
 echo "Particionálás előkészítése..."
 parted --script "$TARGET" mklabel gpt
 
-# 1. EFI partíció (1MiB - 512MiB)
+# 1. EFI partíció
 parted --script "$TARGET" mkpart "EFI" fat32 1MiB 512MiB
 parted --script "$TARGET" set 1 esp on
 
-# Partíciónevek meghatározása helyesen
-if [[ "$TARGET" =~ "nvme" ]] || [[ "$TARGET" =~ "mmcblk" ]]; then
+# Következő kezdőpont fixen 512MiB
+CUR=512
+
+# 2. Swap partíció (ha kérték)
+if [ "$USE_SWAP" == "igen" ]; then
+  SWAP_VAL=$(echo "$SWAP_SIZE" | sed 's/[^0-9]*//g')
+  SWAP_UNIT=$(echo "$SWAP_SIZE" | sed 's/[0-9]*//g')
+  [ -z "$SWAP_UNIT" ] && SWAP_UNIT="GiB"
+  
+  SWAP_END=$((CUR + SWAP_VAL))
+  parted --script "$TARGET" mkpart "swap" linux-swap "${CUR}MiB" "${SWAP_END}${SWAP_UNIT}"
+  CUR=$SWAP_END
+fi
+
+# Partíciónevek meghatározása dinamikusan a választások alapján
+if [[ "$TARGET" =~ "nvme" ]] \vert{}\vert{} [[ "$TARGET" =~ "mmcblk" ]]; then
   EFI_PART="${TARGET}p1"
-  P2="${TARGET}p2"
-  P3="${TARGET}p3"
-  P4="${TARGET}p4"
+  if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
+    SWAP_PART="${TARGET}p2"
+    ROOT_PART="${TARGET}p3"
+    HOME_PART="${TARGET}p4"
+  elif [ "$USE_SWAP" == "igen" ]; then
+    SWAP_PART="${TARGET}p2"
+    ROOT_PART="${TARGET}p3"
+  elif [ "$USE_HOME" == "igen" ]; then
+    ROOT_PART="${TARGET}p2"
+    HOME_PART="${TARGET}p3"
+  else
+    ROOT_PART="${TARGET}p2"
+  fi
 else
   EFI_PART="${TARGET}1"
-  P2="${TARGET}2"
-  P3="${TARGET}3"
-  P4="${TARGET}4"
+  if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
+    SWAP_PART="${TARGET}2"
+    ROOT_PART="${TARGET}3"
+    HOME_PART="${TARGET}4"
+  elif [ "$USE_SWAP" == "igen" ]; then
+    SWAP_PART="${TARGET}2"
+    ROOT_PART="${TARGET}3"
+  elif [ "$USE_HOME" == "igen" ]; then
+    ROOT_PART="${TARGET}2"
+    HOME_PART="${TARGET}3"
+  else
+    ROOT_PART="${TARGET}2"
+  fi
 fi
 
-# 2. Swap vagy Root logika
-CURRENT_START="512MiB"
+# 3. Root és Home partíciók létrehozása
+if [ "$USE_HOME" == "igen" ]; then
+  ROOT_VAL=$(echo "$ROOT_SIZE" | sed 's/[^0-9]*//g')
+  ROOT_UNIT=$(echo "$ROOT_SIZE" | sed 's/[0-9]*//g')
+  [ -z "$ROOT_UNIT" ] && ROOT_UNIT="GiB"
+  
+  # Ha a swap GiB-ben volt, de a CUR MiB-ben, kezeljük le egyszerűsítve:
+  # Legbiztosabb, ha a parted-nek közvetlenül a maradék helyeket adjuk meg:
+  parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_SIZE}"
+  parted --script "$TARGET" mkpart "home" ext4 "${ROOT_SIZE}" 100%
+else
+  parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" 100%
+fi
+
+# Formázások és SWAP bekapcsolás
+echo "Formázás..."
+mkfs.fat -F32 "$EFI_PART"
+mkfs.ext4 -F "$ROOT_PART"
 
 if [ "$USE_SWAP" == "igen" ]; then
-  SWAP_END=$(echo "512 + ${SWAP_SIZE%GiB} * 1024" | bc) # Egyszerűsített számítás MiB-ben vagy használhatjuk közvetlenül a GiB-et
-  # A parted kezeli a GiB-et is, ha pontosan adjuk meg:
-  # Csináljuk tisztán:
-  SWAP_END_VAL=$(echo 512 + $(echo $SWAP_SIZE | tr -d 'GiB')) # közelítés helyett:
-  # Használjuk a parted natív méretezését:
-  # Egyszerűbb: EFI után 512MiB-től indul a swap
-  SWAP_START="512MiB"
-  SWAP_STOP=$(echo 512 + $(echo $SWAP_SIZE | sed 's/[^0-9]*//g') * 1024)MiB 
-  # Hogy elkerüljük a bash math hibákat, csináljuk így:
+  mkswap "$SWAP_PART"
+  swapon "$SWAP_PART"
 fi
+
+if [ "$USE_HOME" == "igen" ]; then
+  mkfs.ext4 -F "$HOME_PART"
+fi
+
+# Felcsatolások
+echo "Fájlrendszer felcsatolása..."
+mount "$ROOT_PART" /mnt
+mkdir -p /mnt/boot
+mount "$EFI_PART" /mnt/boot
+
+if [ "$USE_HOME" == "igen" ]; then
+  mkdir -p /mnt/home
+  mount "$HOME_PART" /mnt/home
+fi
+
+# GPU alapú csomagok összeállítása
+GPU_PACKAGES=""
+if [ "$GPU_CHOICE" == "1" ]; then
+  GPU_PACKAGES="nvidia-open nvidia-settings nvidia-utils lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl"
+elif [ "$GPU_CHOICE" == "2" ]; then
+  GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-
