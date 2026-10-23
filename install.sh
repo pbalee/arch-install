@@ -73,7 +73,7 @@ echo "4) Egyéb / Alap (nincs extra driver)"
 read -p "Válassz (1-4) [alapértelmezett: 4]: " GPU_CHOICE
 GPU_CHOICE=${GPU_CHOICE:-4}
 
-# -- DISK KIVÁLASZTÁS SZÁMOKKAL (Stabilabb ciklus) --
+# -- DISK KIVÁLASZTÁS SZÁMOKKAL --
 echo -e "\nElérhető lemezek:"
 DISKS=()
 i=1
@@ -135,16 +135,19 @@ parted --script "$TARGET" set 1 esp on
 
 CUR=512
 
+# Teljes lemezméret lekérdezése MiB-ben a pontos pozícionáláshoz
+DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB' | cut -d'.' -f1)
+
 # 2. Root partíció
 if [ "$USE_HOME" == "igen" ]; then
   ROOT_END_MB=$(echo "$CUR + $ROOT_SIZE * 1024" | bc)
   parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_END_MB}MiB"
   CUR=$ROOT_END_MB
   
-  # 3. Home partíció és Swap a végén
+  # 3. Home partíció és Swap a lemez végén
   if [ "$USE_SWAP" == "igen" ]; then
-    DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB')
-    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_SIZE * 1024" | bc)
+    SWAP_MB_VAL=$(echo "$SWAP_SIZE * 1024" | bc)
+    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_MB_VAL" | bc)
     
     parted --script "$TARGET" mkpart "home" ext4 "${CUR}MiB" "${SWAP_START_MB}MiB"
     parted --script "$TARGET" mkpart "swap" linux-swap "${SWAP_START_MB}MiB" "100%"
@@ -154,8 +157,8 @@ if [ "$USE_HOME" == "igen" ]; then
 else
   # Nincs külön Home
   if [ "$USE_SWAP" == "igen" ]; then
-    DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB')
-    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_SIZE * 1024" | bc)
+    SWAP_MB_VAL=$(echo "$SWAP_SIZE * 1024" | bc)
+    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_MB_VAL" | bc)
     
     parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${SWAP_START_MB}MiB"
     parted --script "$TARGET" mkpart "swap" linux-swap "${SWAP_START_MB}MiB" "100%"
@@ -232,11 +235,11 @@ elif [ "$GPU_CHOICE" == "3" ]; then
   GPU_PACKAGES="mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel"
 fi
 
-# Csomagok telepítése (pacstrap)
+# Csomagok telepítése (pacstrap) - beleértve a gnome-disk-utility-t is[cite: 6]
 echo "Csomagok telepítése..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
-  grub efibootmgr $DE_PACKAGES \
+  grub efibootmgr $DE_PACKAGES gnome-disk-utility \
   pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol \
   $GPU_PACKAGES \
   firefox firefox-i18n-hu libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu \
@@ -274,6 +277,16 @@ locale-gen
 echo "LANG=hu_HU.UTF-8" > /etc/locale.conf
 
 echo "$HOSTNAME" > /etc/hostname
+
+# -- GLOBÁLIS MAGYAR BILLENTYŰZETKIOSZTÁS (Minden Xorg alapú asztali környezethez) --
+mkdir -p /etc/X11/xorg.conf.d
+cat << 'KB_EOF' > /etc/X11/xorg.conf.d/00-keyboard.conf
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "hu"
+EndSection
+KB_EOF
 
 # Pacman & Makepkg tuning
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
