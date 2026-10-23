@@ -98,7 +98,7 @@ if [ "$HAS_HOME" == "igen" ] && [ -n "$HOME_PART" ]; then
   mount "$HOME_PART" /mnt/home
 fi
 
-# 2. Alap- és felhasználói csomagok telepítése (pacstrap) - JAVÍTVA (nincsenek csoportok és AUR csomagok)
+# 2. Alap- és felhasználói csomagok telepítése (pacstrap)
 echo "Csomagok telepítése a megadott szoftverlista alapján..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
@@ -260,22 +260,14 @@ chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 EOF
 
-# 5. AUR csomagok (Google Chrome és ProtonUp-Qt) telepítése kézi makepkg módszerrel
-echo "AUR csomagok (Google Chrome, ProtonUp-Qt) telepítése..."
+# 5. Google Chrome telepítése AUR-ból kézi makepkg módszerrel
+echo "Google Chrome telepítése hivatalos AUR PKGBUILD módszerrel..."
 arch-chroot /mnt /bin/bash -c "
-  # Google Chrome
   cd /tmp
   sudo -u $USERNAME git clone https://aur.archlinux.org/google-chrome.git
   cd google-chrome
   sudo -u $USERNAME makepkg -si --noconfirm
-  cd /tmp && rm -rf google-chrome
-
-  # ProtonUp-Qt
-  cd /tmp
-  sudo -u $USERNAME git clone https://aur.archlinux.org/protonup-qt.git
-  cd protonup-qt
-  sudo -u $USERNAME makepkg -si --noconfirm
-  cd /tmp && rm -rf protonup-qt
+  rm -rf /tmp/google-chrome
 "
 
 echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
