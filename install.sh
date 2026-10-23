@@ -15,7 +15,7 @@ if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
 fi
 pacman -Sy
 
-echo "=== Arch Linux Automata Telepítő (pbalee Éles verzió) ==="
+echo "=== Arch Linux Automata Telepítő (pbalee Éles verzió v2) ==="
 
 # Alapértelmezett adatok
 read -p "Add meg a gépnevet (hostname) [alapértelmezett: bluelight]: " HOSTNAME
@@ -57,12 +57,12 @@ DE_CHOICE=${DE_CHOICE:-1}
 
 DE_PACKAGES=""
 if [ "$DE_CHOICE" == "1" ]; then
-  # Whisker menü beletéve a csomagok közé
-  DE_PACKAGES="xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 xfce4-whiskermenu-plugin lightdm lightdm-gtk-greeter numlockx"
+  # Whisker menü + xdg-user-dirs a gyári mappákhoz (Letöltések, Dokumentumok stb.) bele téve
+  DE_PACKAGES="xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 xfce4-whiskermenu-plugin xdg-user-dirs lightdm lightdm-gtk-greeter numlockx curl"
 elif [ "$DE_CHOICE" == "2" ]; then
-  DE_PACKAGES="xorg-server gnome gdm"
+  DE_PACKAGES="xorg-server gnome gdm xdg-user-dirs curl"
 elif [ "$DE_CHOICE" == "3" ]; then
-  DE_PACKAGES="xorg-server plasma kde-applications sddm"
+  DE_PACKAGES="xorg-server plasma kde-applications sddm xdg-user-dirs curl"
 fi
 
 # -- GPU VÁLASZTÁS --
@@ -208,7 +208,7 @@ GPU_PACKAGES=""
 [ "$GPU_CHOICE" == "2" ] && GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon"
 [ "$GPU_CHOICE" == "3" ] && GPU_PACKAGES="mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel"
 
-# Csomagok telepítése (VirtualBox & Whisker-rel)
+# Csomagok telepítése
 echo "Csomagok telepítése..."
 pacstrap -K /mnt \
   base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
@@ -264,7 +264,7 @@ KB_EOF
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
 if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
-  echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+  echo -e "\n[multilib]\nInclude = /etc/pacman.service" >> /etc/pacman.conf # (marad a tükörlista)
 fi
 
 sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j\$(nproc)"/' /etc/makepkg.conf
@@ -289,7 +289,7 @@ systemctl enable NetworkManager
 # VirtualBox modul & csoport
 echo "vboxdrv" > /etc/modules-load.d/virtualbox.conf
 
-# Felhasználók létrehozása automatikus jelszóval
+# Felhasználók létrehozása
 echo "root:$ROOTPASSWORD" | chpasswd
 useradd -m -G wheel,storage,power,input,vboxusers -s /bin/bash $USERNAME
 echo "$USERNAME:$PASSWORD" | chpasswd
@@ -305,6 +305,9 @@ fi
 
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
 grub-mkconfig -o /boot/grub/grub.cfg
+
+# Gyári könyvtárak (Letöltések, Dokumentumok, Képek stb.) generálása a felhasználónak
+su - $USERNAME -c "xdg-user-dirs-update"
 
 # Takarító szkript & Aliasok
 cat << 'CLEAN_EOF' > /home/$USERNAME/.arch-clean.sh
@@ -331,8 +334,8 @@ chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 EOF
 
-# Google Chrome, RustDesk AUR telepítés, valamint az XFCE profil letöltése és visszaállítása
-echo "Google Chrome, RustDesk telepítése az AUR-ból, valamint XFCE profil visszatöltése..."
+# AUR csomagok (Chrome, RustDesk), profil letöltése (curl-lal) és RustDesk service engedélyezése
+echo "AUR csomagok telepítése, XFCE profil visszatöltése és RustDesk service indítás..."
 arch-chroot /mnt /bin/bash -c "
   useradd -m -s /bin/bash builder
   echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers.d/builder
@@ -343,11 +346,14 @@ arch-chroot /mnt /bin/bash -c "
   userdel -r builder
   rm -f /etc/sudoers.d/builder
 
-  # XFCE profil letöltése a GitHubodról és kicsomagolása a felhasználó home mappájába
-  wget -O /home/$USERNAME/xfce-backup.tar.gz https://raw.githubusercontent.com/pbalee/arch-install/main/xfce-backup.tar.gz
+  # XFCE profil letöltése curl-lal (mivel wget nincs)
+  curl -L -o /home/$USERNAME/xfce-backup.tar.gz https://raw.githubusercontent.com/pbalee/arch-install/main/xfce-backup.tar.gz
   tar -xzvf /home/$USERNAME/xfce-backup.tar.gz -C /home/$USERNAME/
   rm -f /home/$USERNAME/xfce-backup.tar.gz
   chown -R $USERNAME:$USERNAME /home/$USERNAME/.config
+
+  # RustDesk (hbbs/hbci kliensdemó háttérszolgáltatásként) engedélyezése, hogy boot után fusson
+  systemctl enable rustdesk
 "
 
 echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
