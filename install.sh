@@ -10,7 +10,7 @@ fi
 echo "Live ISO pacman beállítások frissítése (Color, ILoveCandy, ParallelDownloads, Multilib)..."
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
-if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
+if ! grep -q "^[multilib]" /etc/pacman.conf; then
   echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
 fi
 pacman -Sy
@@ -38,7 +38,7 @@ done
 
 while true; do
   read -s -p "Add meg a felhasználó ($USERNAME) jelszavát [alapértelmezett: pbalee]: " PASSWORD
-  PASSWORD=${PASSWORD:-pbalee}
+PASSWORD=${PASSWORD:-pbalee}
   echo
   read -s -p "Add meg a felhasználó jelszavát újra: " PASSWORD2
   PASSWORD2=${PASSWORD2:-pbalee}
@@ -73,10 +73,10 @@ echo "4) Egyéb / Alap (nincs extra driver)"
 read -p "Válassz (1-4) [alapértelmezett: 4]: " GPU_CHOICE
 GPU_CHOICE=${GPU_CHOICE:-4}
 
-# -- DISK KIVÁLASZTÁS SZÁMOKKAL --
+# -- DISK KIVÁLASZTÁS SZÁMOKKAL (javítva) --
 echo -e "\nElérhető lemezek:"
 mapfile -t DISKS < <(lsblk -d -n -o NAME,SIZE,MODEL | grep -v "loop")
-for i in "${!DISKS[@pliers]}"; do
+for i in "${!DISKS[@]}"; do
   echo "$((i+1))) ${DISKS[$i]}"
 done
 
@@ -134,16 +134,14 @@ CUR=512
 
 # 2. Root partíció
 if [ "$USE_HOME" == "igen" ]; then
-  ROOT_END_MB=$(echo "$CUR + $ROOT_SIZE * 1024" | bc)
+  ROOT_END_MB=$(echo "$CUR +$ROOT_SIZE * 1024" | bc)
   parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_END_MB}MiB"
   CUR=$ROOT_END_MB
   
-  # 3. Home partíció (A Swap előtt, ha van swap, a maradékból levonva, vagy ha nincs swap, a végéig)
+  # 3. Home partíció és Swap a végén
   if [ "$USE_SWAP" == "igen" ]; then
-    HOME_END_MB=$(echo "100% - $SWAP_SIZE * 1024" | bc) # Könnyebb százalékkal vagy számítással
-    # Pontosabb számítás MiB-ben: lemez teljes méretének lekérdezése
     DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB')
-    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_SIZE * 1024" | bc)
+    SWAP_START_MB=$(echo "$DISK_SIZE_MB -$SWAP_SIZE * 1024" | bc)
     
     parted --script "$TARGET" mkpart "home" ext4 "${CUR}MiB" "${SWAP_START_MB}MiB"
     parted --script "$TARGET" mkpart "swap" linux-swap "${SWAP_START_MB}MiB" "100%"
@@ -154,7 +152,7 @@ else
   # Nincs külön Home
   if [ "$USE_SWAP" == "igen" ]; then
     DISK_SIZE_MB=$(parted -s "$TARGET" unit MiB print | grep Disk | awk '{print $2}' | tr -d 'MiB')
-    SWAP_START_MB=$(echo "$DISK_SIZE_MB - $SWAP_SIZE * 1024" | bc)
+    SWAP_START_MB=$(echo "$DISK_SIZE_MB -$SWAP_SIZE * 1024" | bc)
     
     parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${SWAP_START_MB}MiB"
     parted --script "$TARGET" mkpart "swap" linux-swap "${SWAP_START_MB}MiB" "100%"
@@ -164,7 +162,7 @@ else
 fi
 
 # Partíciónevek dinamikus meghatározása a sorrend alapján (EFI -> Root -> Home -> Swap)
-if [[ "$TARGET" =~ "nvme" ]] || [[ "$TARGET" =~ "mmcblk" ]]; then
+if [[ "$TARGET" =~ "nvme" ]] \vert{}\vert{} [[ "$TARGET" =~ "mmcblk" ]]; then
   EFI_PART="${TARGET}p1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
     ROOT_PART="${TARGET}p2"
@@ -277,7 +275,7 @@ echo "$HOSTNAME" > /etc/hostname
 # Pacman & Makepkg tuning
 sed -i 's/#Color/Color\nILoveCandy/' /etc/pacman.conf
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 9/' /etc/pacman.conf
-if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
+if ! grep -q "^[multilib]" /etc/pacman.conf; then
   echo -e "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
 fi
 
@@ -285,7 +283,7 @@ sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j\$(nproc)"/' /etc/makepkg.conf
 sed -i 's/^COMPRESSZST=(zstd -c -z -q -)/COMPRESSZST=(zstd -c -z -q --threads=0 -)/' /etc/makepkg.conf
 sed -i 's/#BUILDDIR=\/tmp\/build/BUILDDIR=\/tmp\/build/' /etc/makepkg.conf
 
-# Display Manager kezelés (LightDM vagy GDM vagy SDDM)
+# Display Manager kezelés
 if [ "$DE_CHOICE" == "1" ]; then
   systemctl enable lightdm
   if grep -q "\[Seat:\*\]" /etc/lightdm/lightdm.conf; then
@@ -324,37 +322,3 @@ grub-mkconfig -o /boot/grub/grub.cfg
 
 # Takarító szkript & Aliasok
 cat << 'CLEAN_EOF' > /home/$USERNAME/.arch-clean.sh
-#!/usr/bin/env bash
-set -e
-sudo paccache -r -k 2 || true
-orphans=\$(pacman -Qtdq || true)
-[ -n "\$orphans" ] && sudo pacman -Rns \$orphans
-sudo journalctl --vacuum-time=7d
-echo "✅ Takarítás kész!"
-CLEAN_EOF
-chmod +x /home/$USERNAME/.arch-clean.sh
-chown $USERNAME:$USERNAME /home/$USERNAME/.arch-clean.sh
-
-cat << 'BASHRC_EOF' >> /home/$USERNAME/.bashrc
-alias cl='clear'
-alias e='exit'
-alias y='yay -Syu'
-alias sr='sudo reboot'
-alias in='sudo pacman -S '
-alias rem="\$HOME/.arch-clean.sh"
-BASHRC_EOF
-chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
-
-EOF
-
-# Google Chrome AUR-ból
-echo "Google Chrome telepítése..."
-arch-chroot /mnt /bin/bash -c "
-  cd /tmp
-  sudo -u $USERNAME git clone https://aur.archlinux.org/google-chrome.git
-  cd google-chrome
-  sudo -u $USERNAME makepkg -si --noconfirm
-  rm -rf /tmp/google-chrome
-"
-
-echo -e "\n=== Telepítés sikeresen kész! Lépj ki és indítsd újra a gépet (reboot). ==="
