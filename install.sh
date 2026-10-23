@@ -88,7 +88,7 @@ if [ "$USE_HOME" == "igen" ]; then
   ROOT_SIZE=${ROOT_SIZE:-75GiB}
 fi
 
-# Particionálás végrehajtása parted-del (Biztos GPT séma, százalékok vagy fix méretek helyett pontos eltolásokkal)
+# Particionálás végrehajtása parted-del (Biztos GPT séma és stabil MiB alapú eltolások)
 echo "Particionálás előkészítése..."
 parted --script "$TARGET" mklabel gpt
 
@@ -96,21 +96,17 @@ parted --script "$TARGET" mklabel gpt
 parted --script "$TARGET" mkpart "EFI" fat32 1MiB 512MiB
 parted --script "$TARGET" set 1 esp on
 
-# Következő kezdőpont fixen 512MiB
-CUR=512
-
 # 2. Swap partíció (ha kérték)
 if [ "$USE_SWAP" == "igen" ]; then
-  SWAP_VAL=$(echo "$SWAP_SIZE" | sed 's/[^0-9]*//g')
-  SWAP_UNIT=$(echo "$SWAP_SIZE" | sed 's/[0-9]*//g')
-  [ -z "$SWAP_UNIT" ] && SWAP_UNIT="GiB"
-  
-  SWAP_END=$((CUR + SWAP_VAL))
-  parted --script "$TARGET" mkpart "swap" linux-swap "${CUR}MiB" "${SWAP_END}${SWAP_UNIT}"
-  CUR=$SWAP_END
+  SWAP_VAL=$(echo "$SWAP_SIZE" | tr -d 'a-zA-Z')
+  SWAP_END=$(echo 512 + "$SWAP_VAL" * 1024 | bc)
+  parted --script "$TARGET" mkpart "swap" linux-swap 512MiB "${SWAP_END}MiB"
+  ROOT_START="${SWAP_END}MiB"
+else
+  ROOT_START="512MiB"
 fi
 
-# Partíciónevek meghatározása dinamikusan a választások alapján
+# Partíciónevek meghatározása dinamikusan
 if [[ "$TARGET" =~ "nvme" ]] \vert{}\vert{} [[ "$TARGET" =~ "mmcblk" ]]; then
   EFI_PART="${TARGET}p1"
   if [ "$USE_SWAP" == "igen" ] && [ "$USE_HOME" == "igen" ]; then
@@ -145,16 +141,14 @@ fi
 
 # 3. Root és Home partíciók létrehozása
 if [ "$USE_HOME" == "igen" ]; then
-  ROOT_VAL=$(echo "$ROOT_SIZE" | sed 's/[^0-9]*//g')
-  ROOT_UNIT=$(echo "$ROOT_SIZE" | sed 's/[0-9]*//g')
-  [ -z "$ROOT_UNIT" ] && ROOT_UNIT="GiB"
+  ROOT_VAL=$(echo "$ROOT_SIZE" | tr -d 'a-zA-Z')
+  ROOT_START_NUM=$(echo "$ROOT_START" | tr -d 'a-zA-Z')
+  ROOT_END_MB=$(echo "$ROOT_START_NUM" + "$ROOT_VAL" * 1024 | bc)
   
-  # Ha a swap GiB-ben volt, de a CUR MiB-ben, kezeljük le egyszerűsítve:
-  # Legbiztosabb, ha a parted-nek közvetlenül a maradék helyeket adjuk meg:
-  parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" "${ROOT_SIZE}"
-  parted --script "$TARGET" mkpart "home" ext4 "${ROOT_SIZE}" 100%
+  parted --script "$TARGET" mkpart "root" ext4 "$ROOT_START" "${ROOT_END_MB}MiB"
+  parted --script "$TARGET" mkpart "home" ext4 "${ROOT_END_MB}MiB" 100%
 else
-  parted --script "$TARGET" mkpart "root" ext4 "${CUR}MiB" 100%
+  parted --script "$TARGET" mkpart "root" ext4 "$ROOT_START" 100%
 fi
 
 # Formázások és SWAP bekapcsolás
@@ -187,4 +181,52 @@ GPU_PACKAGES=""
 if [ "$GPU_CHOICE" == "1" ]; then
   GPU_PACKAGES="nvidia-open nvidia-settings nvidia-utils lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl"
 elif [ "$GPU_CHOICE" == "2" ]; then
-  GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-
+  GPU_PACKAGES="mesa lib32-mesa xf86-video-amdgpu vulkan-radeon lib32-vulkan-radeon"
+elif [ "$GPU_CHOICE" == "3" ]; then
+  GPU_PACKAGES="mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel"
+fi
+
+# Csomagok telepítése (pacstrap)
+echo "Csomagok telepítése..."
+pacstrap -K /mnt \
+  base base-devel linux linux-firmware linux-headers nano micro git networkmanager \
+  grub efibootmgr xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager xfce4-taskmanager xfce4-terminal xfconf xfdesktop xfwm4 lightdm lightdm-gtk-greeter numlockx \
+  pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol \
+  $GPU_PACKAGES \
+  firefox firefox-i18n-hu libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu \
+  mc mousepad thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman file-roller 7zip unrar unzip \
+  keepassxc qbittorrent audacious parole ristretto galculator \
+  lutris gamemode gamescope mangohud wine wine-gecko wine-mono \
+  lib32-freetype2 lib32-gamemode lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader \
+  udisks2 gvfs gvfs-afc gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb ntfs-3g exfatprogs dosfstools \
+  flatpak pacman-contrib reflector htop glances duf inxi lsb-release sudo
+
+# Fstab generálása
+genfstab -U /mnt >> /mnt/etc/fstab
+
+if [ "$ADD_EXTRA" == "igen" ]; then
+  mkdir -p /mnt/Games /mnt/Download
+  cat << 'EOF' >> /mnt/etc/fstab
+
+# Games Ext4 1TB
+UUID=9471a888-07ec-45ed-b516-eb6aa1513a64 /Games ext4 defaults,noatime,nofail,x-gvfs-show,x-gvfs-name=Games 0 2
+
+# Downloads NTFS
+UUID=7460557760554152 /Download ntfs3 defaults,noatime,uid=1000,gid=1000,umask=022,nofail,x-gvfs-show,x-gvfs-name=Downloads 0 0
+EOF
+fi
+
+# Chroot konfig
+arch-chroot /mnt /bin/bash <<EOF
+
+ln -sf /usr/share/zoneinfo/Europe/Budapest /etc/localtime
+hwclock --systohc
+
+echo "hu_HU.UTF-8 UTF-8" >> /etc/locale.gen
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+locale-gen
+echo "LANG=hu_HU.UTF-8" > /etc/locale.conf
+
+echo "$HOSTNAME" > /etc/hostname
+
+# Pacman
