@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="3.7"
+VERSION="3.8"
 SCRIPT_NAME="Arch Linux kényelmes telepítő"
 
 # ---------- Színek és segédfüggvények ----------
@@ -106,11 +106,11 @@ case "$GPU_CHOICE" in
   4) ;;
 esac
 
-# ---------- Lemez kiválasztása (hibamentes tömbkezeléssel) ----------
+# ---------- Lemez kiválasztása (biztonságos módszerrel) ----------
 printf '\n%sElérhető fizikai lemezek%s\n' "$BOLD" "$RESET"
 DISK_PATHS=()
-while read -r line; do
-  [[ -n "$line" ]] && DISK_PATHS+=("$line")
+while read -r disk_path; do
+  [[ -n "$disk_path" ]] && DISK_PATHS+=("$disk_path")
 done < <(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}')
 
 ((${#DISK_PATHS[@]} > 0)) || die "Nem található fizikai lemez."
