@@ -74,16 +74,16 @@ GPU_CHOICE=$(ask_number "Választás (1–4)" 4 1 4)
 GPU_PACKAGES=()
 case "$GPU_CHOICE" in
   1) GPU_PACKAGES=(nvidia-open-dkms nvidia-utils nvidia-settings lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl) ;;
-  2) GPU_PACKAGES=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon lib32-mesa) ;;
+  2) GPU_PACKAGES=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon) ;;
   3) GPU_PACKAGES=(mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel) ;;
   4) ;;
 esac
 
 printf '\n\033[1mElérhető fizikai lemezek\033[0m\n'
 DISK_PATHS=()
-while read -r disk_path; do
-  [[ -n "$disk_path" ]] && DISK_PATHS+=("$disk_path")
-done < <(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}')
+for disk in $(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}'); do
+  [[ -b "$disk" ]] && DISK_PATHS+=("$disk")
+done
 
 ((${#DISK_PATHS[@]} > 0)) || die "Nem található fizikai lemez."
 for idx in "${!DISK_PATHS[@]}"; do
