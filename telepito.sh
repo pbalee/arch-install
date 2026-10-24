@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="3.1"
+VERSION="3.2"
 SCRIPT_NAME="Arch Linux kényelmes telepítő"
 
 # ---------- Színek és segédfüggvények ----------
@@ -107,159 +107,34 @@ case "$GPU_CHOICE" in
 esac
 
 # ---------- Lemez kiválasztása ----------
-mapfile -t DISK_PATHS < <(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}')
-((${#DISK_PATHS[@]} > 0)) || die "Nem található fizikai lemez."
+printf '\n%sElérhető fizikai lemezek%s\n' "$BOLD" "$RESET"
+mapfile -t DISK_PATHS < <(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}') ((${#DISK_PATHS[@]} > 0)) || die "Nem található fizikai lemez."
 for idx in "${!DISK_PATHS[@]}"; do
   path=${DISK_PATHS[$idx]}
-  details=$(lsblk -dnpo SIZE,MODEL "$path" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')
+  details=$(lsblk -dnpo SIZE,MODEL "$path" \vert{} sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')
   printf '  %d) %-18s %s\n' "$((idx+1))" "$path" "$details"
 done
 DISK_INDEX=$(ask_number "A céllemez sorszáma" 1 1 "${#DISK_PATHS[@]}")
 TARGET=${DISK_PATHS[$((DISK_INDEX-1))]}
+[[ -b "$TARGET" ]] || die "A kiválasztott cél nem blokkeszköz: $TARGET"
 
-# ---------- Particionálási terv ----------
+# ---------- Particionálási terv opciók ----------
 USE_SWAP=igen
 USE_HOME=igen
 SWAP_SIZE=4
 ROOT_SIZE=75
-ADD_EXTRA=nem
-INSTALL_AUR_APPS=igen
-RESTORE_XFCE=igen
 
-# ---------- Pacman beállítások ----------
-sed -i 's/^#Color$/Color/' /etc/pacman.conf || true
-grep -q '^ILoveCandy$' /etc/pacman.conf || sed -i '/^Color$/a ILoveCandy' /etc/pacman.conf
-sed -i 's/^#ParallelDownloads = 5$/ParallelDownloads = 9/' /etc/pacman.conf || true
-grep -q '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-pacman -Sy --noconfirm
-
-# ---------- Particionálás ----------
-SECTORS=$(cat "/sys/class/block/$(basename "$TARGET")/size")
-DISK_SIZE_MB=$((SECTORS / 2048))
-END_MB=$((DISK_SIZE_MB - 2))
-SWAP_MB=$((SWAP_SIZE * 1024))
-SWAP_START=$((END_MB - SWAP_MB))
-ROOT_END=$((1025 + ROOT_SIZE * 1024))
-
-parted --script "$TARGET" mklabel gpt
-parted --script "$TARGET" mkpart ESP fat32 1MiB 1025MiB
-parted --script "$TARGET" set 1 esp on
-parted --script "$TARGET" mkpart root ext4 "1025MiB" "${ROOT_END}MiB"
-parted --script "$TARGET" mkpart home ext4 "${ROOT_END}MiB" "${SWAP_START}MiB"
-parted --script "$TARGET" mkpart swap linux-swap "${SWAP_START}MiB" "100%"
-partprobe "$TARGET"
-sleep 2
-
-if [[ "$TARGET" =~ (nvme|mmcblk|loop)[0-9] ]]; then PART_PREFIX="${TARGET}p"; else PART_PREFIX="$TARGET"; fi
-EFI_PART="${PART_PREFIX}1"
-ROOT_PART="${PART_PREFIX}2"
-HOME_PART="${PART_PREFIX}3"
-SWAP_PART="${PART_PREFIX}4"
-
-# ---------- Formázás és csatolás ----------
-mkfs.fat -F32 "$EFI_PART"
-mkfs.ext4 -F "$ROOT_PART"
-mkfs.ext4 -F "$HOME_PART"
-mkswap "$SWAP_PART"
-swapon "$SWAP_PART"
-
-mkdir -p /mnt
-mount "$ROOT_PART" /mnt
-mkdir -p /mnt/boot
-mount "$EFI_PART" /mnt/boot
-mkdir -p /mnt/home
-mount "$HOME_PART" /mnt/home
-
-# ---------- Csomaglista (okularral és fastfetch-csel kiegészítve) ----------
-BASE_PACKAGES=(base base-devel linux linux-firmware linux-headers nano micro git curl wget networkmanager grub efibootmgr sudo virtualbox virtualbox-host-dkms)
-COMMON_PACKAGES=(pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol firefox firefox-i18n-hu libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu mc thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman file-roller 7zip unrar unzip keepassxc qbittorrent audacious parole ristretto galculator lutris gamemode gamescope mangohud wine wine-gecko wine-mono lib32-freetype2 lib32-gamemode lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader udisks2 gvfs gvfs-afc gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb ntfs-3g exfatprogs dosfstools flatpak pacman-contrib reflector htop glances duf inxi lsb-release gnome-disk-utility okular fastfetch)
-if [[ "$DE_CHOICE" == 1 ]]; then COMMON_PACKAGES+=(mousepad); fi
-if [[ "$GPU_CHOICE" == 2 || "$GPU_CHOICE" == 3 ]]; then COMMON_PACKAGES+=(lib32-mesa); fi
-
-pacstrap -K /mnt "${BASE_PACKAGES[@]}" "${DE_PACKAGES[@]}" "${COMMON_PACKAGES[@]}" "${GPU_PACKAGES[@]}"
-
-genfstab -U /mnt > /mnt/etc/fstab
-
-# ---------- Chroot beállítások (biztonságos jelszóátadással) ----------
-export HOSTNAME USERNAME ROOTPASSWORD PASSWORD DE_CHOICE GPU_CHOICE INSTALL_AUR_APPS RESTORE_XFCE
-arch-chroot /mnt /bin/bash <<'CHROOT_EOF'
-set -Eeuo pipefail
-ln -sf /usr/share/zoneinfo/Europe/Budapest /etc/localtime
-hwclock --systohc
-
-for locale_line in 'hu_HU.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8'; do
-  grep -qxF "$locale_line" /etc/locale.gen || printf '%s\n' "$locale_line" >> /etc/locale.gen
-done
-locale-gen
-printf 'LANG=hu_HU.UTF-8\n' > /etc/locale.conf
-printf '%s\n' "$HOSTNAME" > /etc/hostname
-
-mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<'KB_EOF'
-Section "InputClass"
-    Identifier "system-keyboard"
-    MatchIsKeyboard "on"
-    Option "XkbLayout" "hu"
-EndSection
-KB_EOF
-
-sed -i 's/^#Color$/Color/' /etc/pacman.conf || true
-grep -q '^ILoveCandy$' /etc/pacman.conf || sed -i '/^Color$/a ILoveCandy' /etc/pacman.conf
-sed -i 's/^#ParallelDownloads = 5$/ParallelDownloads = 9/' /etc/pacman.conf || true
-grep -q '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-
-case "$DE_CHOICE" in
-  1) systemctl enable lightdm
-     printf '\n[Seat:*]\ndisplay-setup-script=numlockx on\n' >> /etc/lightdm/lightdm.conf ;;
-  2) systemctl enable gdm ;;
-  3) systemctl enable sddm ;;
-esac
-systemctl enable NetworkManager
-
-# Jelszavak beállítása biztonságosan
-printf 'root:%s\n' "$ROOTPASSWORD" | chpasswd
-useradd -m -G wheel,storage,power,input,vboxusers -s /bin/bash "$USERNAME"
-printf '%s:%s\n' "$USERNAME" "$PASSWORD" | chpasswd
-printf '%%wheel ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/10-wheel
-chmod 0440 /etc/sudoers.d/10-wheel
-
-sed -i 's/^#\?GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=true/' /etc/default/grub || printf '\nGRUB_DISABLE_OS_PROBER=true\n' >> /etc/default/grub
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
-grub-mkconfig -o /boot/grub/grub.cfg
-
-printf 'vboxdrv\n' > /etc/modules-load.d/virtualbox.conf
-
-runuser -u "$USERNAME" -- env HOME="/home/$USERNAME" xdg-user-dirs-update
-
-cat >> "/home/$USERNAME/.bashrc" <<'BASHRC_EOF'
-alias cl='clear'
-alias e='exit'
-alias y='yay -Syu'
-alias sr='sudo reboot'
-alias in='sudo pacman -S'
-fastfetch
-BASHRC_EOF
-chown "$USERNAME:$USERNAME" "/home/$USERNAME/.bashrc"
-
-if [[ "$INSTALL_AUR_APPS" == igen ]]; then
-  useradd -m -s /bin/bash aurbuilder
-  printf 'aurbuilder ALL=(ALL:ALL) NOPASSWD: /usr/bin/pacman\n' > /etc/sudoers.d/aurbuilder
-  chmod 0440 /etc/sudoers.d/aurbuilder
-  for pkg in yay-bin google-chrome rustdesk-bin; do
-    runuser -u aurbuilder -- bash -lc "cd /tmp && rm -rf '$pkg' && git clone 'https://aur.archlinux.org/$pkg.git' '$pkg' && cd '$pkg' && makepkg -si --noconfirm"
-  done
-  userdel -r aurbuilder || true
-  rm -f /etc/sudoers.d/aurbuilder
-  systemctl enable rustdesk.service || true
+if ask_yes_no "Szeretnél külön SWAP partíciót?" "igen"; then
+  USE_SWAP=igen
+  TOTAL_RAM_KB=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
+  TOTAL_RAM_GB=$((TOTAL_RAM_KB / 1024 / 1024))
+  SUGGESTED_SWAP=$((TOTAL_RAM_GB / 2))
+  [ "$SUGGESTED_SWAP" -lt 1 ] && SUGGESTED_SWAP=1
+  SWAP_SIZE=$(ask_number "Swap mérete GiB-ban" "$SUGGESTED_SWAP" 1 128)
+else
+  USE_SWAP=nem
 fi
 
-if [[ "$RESTORE_XFCE" == igen ]]; then
-  profile='/home/'"$USERNAME"'/xfce-backup.tar.gz'
-  curl --fail --location --show-error --output "$profile" 'https://raw.githubusercontent.com/pbalee/arch-install/main/xfce-backup.tar.gz'
-  tar -xzf "$profile" -C "/home/$USERNAME"
-  rm -f "$profile"
-  chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.config"
-fi
-CHROOT_EOF
-
-ok "Telepítés sikeresen lefutott! Indítsd újra a gépet."
+if ask_yes_no "Szeretnél külön /home partíciót?" "igen"; then
+  USE_HOME=igen
+  ROOT_SIZE=$(ask_number "A root (/) partíció mérete GiB-ban" 75 20 409
