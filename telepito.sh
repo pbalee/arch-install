@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="4.1"
+VERSION="4.2"
 SCRIPT_NAME="Arch Linux kényelmes telepítő"
 
 # ---------- Színek és segédfüggvények ----------
@@ -87,4 +87,33 @@ PASSWORD=$(read_password_pair "$USERNAME")
 # ---------- Asztali környezet ----------
 printf '\n%sAsztali környezet%s\n' "$BOLD" "$RESET"
 printf '  1) XFCE\n  2) GNOME\n  3) KDE Plasma\n'
-DE_CHOICE=$(ask_number "Választás (1–3)" 1
+DE_CHOICE=$(ask_number "Választás (1–3)" 1 1 3)
+case "$DE_CHOICE" in
+  1) DE_NAME="XFCE"; DE_PACKAGES=(xorg-server xfce4 xfce4-whiskermenu-plugin xdg-user-dirs lightdm lightdm-gtk-greeter numlockx) ;;
+  2) DE_NAME="GNOME"; DE_PACKAGES=(gnome gdm xdg-user-dirs) ;;
+  3) DE_NAME="KDE Plasma"; DE_PACKAGES=(plasma kde-applications sddm xdg-user-dirs) ;;
+esac
+
+# ---------- Grafikus kártya ----------
+printf '\n%sGrafikus kártya%s\n' "$BOLD" "$RESET"
+printf '  1) NVIDIA\n  2) AMD\n  3) Intel\n  4) Egyéb / alap\n'
+GPU_CHOICE=$(ask_number "Választás (1–4)" 4 1 4)
+GPU_PACKAGES=()
+case "$GPU_CHOICE" in
+  1) GPU_PACKAGES=(nvidia-open-dkms nvidia-utils nvidia-settings lib32-nvidia-utils opencl-nvidia libva-nvidia-driver libxnvctrl) ;;
+  2) GPU_PACKAGES=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon) ;;
+  3) GPU_PACKAGES=(mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel) ;;
+  4) ;;
+esac
+
+# ---------- Lemez kiválasztása (Javított, biztonságos beolvasás) ----------
+printf '\n%sElérhető fizikai lemezek%s\n' "$BOLD" "$RESET"
+DISK_PATHS=()
+while read -r disk_path; do
+  [[ -n "$disk_path" ]] && DISK_PATHS+=("$disk_path")
+done < <(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}')
+
+((${#DISK_PATHS[@]} > 0)) || die "Nem található fizikai lemez."
+for idx in "${!DISK_PATHS[@]}"; do
+  path="${DISK_PATHS[$idx]}"
+  details=$(lsblk -dnpo SIZE,MODEL "$path" | sed 's/[[:space:]]\
