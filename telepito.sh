@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="3.3"
+VERSION="3.4"
 SCRIPT_NAME="Arch Linux kényelmes telepítő"
 
 # ---------- Színek és segédfüggvények ----------
@@ -228,19 +228,20 @@ UUID=7460557760554152 /mnt/Download ntfs3 defaults,noatime,uid=1000,gid=1000,uma
 FSTAB_EOF
 fi
 
-# ---------- Chroot beállítások (javított, nem idézetezett heredoc-kal a változók átadásához) ----------
+# ---------- Chroot beállítások (javított set +u a lokális változók hibájának elkerülésére) ----------
 export HOSTNAME USERNAME ROOTPASSWORD PASSWORD DE_CHOICE GPU_CHOICE INSTALL_AUR_APPS RESTORE_XFCE
 arch-chroot /mnt /bin/bash <<CHROOT_EOF
 set -Eeuo pipefail
+set +u
 ln -sf /usr/share/zoneinfo/Europe/Budapest /etc/localtime
 hwclock --systohc
 
 for locale_line in 'hu_HU.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8'; do
-  grep -qxF "$locale_line" /etc/locale.gen || printf '%s\n' "$locale_line" >> /etc/locale.gen
+  grep -qxF "\$locale_line" /etc/locale.gen || printf '%s\n' "\$locale_line" >> /etc/locale.gen
 done
 locale-gen
 printf 'LANG=hu_HU.UTF-8\n' > /etc/locale.conf
-printf '%s\n' "$HOSTNAME" > /etc/hostname
+printf '%s\n' "\$HOSTNAME" > /etc/hostname
 
 mkdir -p /etc/X11/xorg.conf.d
 cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<'KB_EOF'
@@ -256,7 +257,7 @@ grep -q '^ILoveCandy$' /etc/pacman.conf || sed -i '/^Color$/a ILoveCandy' /etc/p
 sed -i 's/^#ParallelDownloads = 5$/ParallelDownloads = 9/' /etc/pacman.conf || true
 grep -q '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
 
-case "$DE_CHOICE" in
+case "\$DE_CHOICE" in
   1) systemctl enable lightdm
      printf '\n[Seat:*]\ndisplay-setup-script=numlockx on\n' >> /etc/lightdm/lightdm.conf ;;
   2) systemctl enable gdm ;;
