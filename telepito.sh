@@ -8,7 +8,12 @@ ok()    { printf '\033[32m✔\033[0m %s\n' "$*"; }
 warn()  { printf '\033[33m⚠\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[31m✖ HIBA:\033[0m %s\n' "$*" >&2; exit 1; }
 
-trap 'local rc=$?; echo -e "\n\033[31mA telepítő hibával leállt (kilépési kód: $rc).\033[0m" >&2; exit "$rc"' ERR
+handle_error() {
+  local rc=$?
+  printf '\n\033[31mA telepítő hibával leállt (kilépési kód: %s).\033[0m\n' "$rc" >&2
+  exit "$rc"
+}
+trap handle_error ERR
 
 ask_default() {
   local prompt=$1 default=$2 answer
@@ -81,7 +86,7 @@ esac
 
 printf '\n\033[1mElérhető fizikai lemezek\033[0m\n'
 DISK_PATHS=()
-for disk in $(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}'); do
+for disk in $(lsblk -dno NAME,TYPE | awk '$2 == "disk" {print "/dev/"$1}'); do
   [[ -b "$disk" ]] && DISK_PATHS+=("$disk")
 done
 
@@ -96,7 +101,11 @@ DISK_INDEX=$(ask_number "A céllemez sorszáma" 1 1 "${#DISK_PATHS[@]}")
 TARGET="${DISK_PATHS[$((DISK_INDEX-1))]}"
 [[ -b "$TARGET" ]] || die "A kiválasztott cél nem blokkeszköz: $TARGET"
 
-USE_SWAP=igen; USE_HOME=igen; FORMAT_HOME=igen; SWAP_SIZE=4; ROOT_SIZE=75
+USE_SWAP=igen
+USE_HOME=igen
+FORMAT_HOME=igen
+SWAP_SIZE=4
+ROOT_SIZE=75
 
 if ask_yes_no "Szeretnél külön SWAP partíciót?" "igen"; then
   TOTAL_RAM_KB=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
@@ -237,14 +246,15 @@ case "$DE_CHOICE" in
 esac
 arch-chroot /mnt systemctl enable NetworkManager
 
-printf 'root:%s\n' "$ROOTPASSWORD" | arch-chroot /mnt chpasswd
+# Biztonságos jelszóbeállítás közvetlen chroot parancsként
+arch-chroot /mnt bash -c "echo 'root:$ROOTPASSWORD' | chpasswd"
 
 if arch-chroot /mnt id "$USERNAME" &>/dev/null; then
   printf 'A(z) %s felhasználó már létezik, jelszó frissítése...\n' "$USERNAME"
-  printf '%s:%s\n' "$USERNAME" "$PASSWORD" | arch-chroot /mnt chpasswd
+  arch-chroot /mnt bash -c "echo '$USERNAME:$PASSWORD' | chpasswd"
 else
   arch-chroot /mnt useradd -m -G wheel,storage,power,input,vboxusers -s /bin/bash "$USERNAME"
-  printf '%s:%s\n' "$USERNAME" "$PASSWORD" | arch-chroot /mnt chpasswd
+  arch-chroot /mnt bash -c "echo '$USERNAME:$PASSWORD' | chpasswd"
 fi
 
 printf '%%wheel ALL=(ALL:ALL) ALL\n' > /mnt/etc/sudoers.d/10-wheel
