@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="3.8"
+VERSION="3.9"
 SCRIPT_NAME="Arch Linux kényelmes telepítő"
 
 # ---------- Színek és segédfüggvények ----------
@@ -106,7 +106,7 @@ case "$GPU_CHOICE" in
   4) ;;
 esac
 
-# ---------- Lemez kiválasztása (biztonságos módszerrel) ----------
+# ---------- Lemez kiválasztása ----------
 printf '\n%sElérhető fizikai lemezek%s\n' "$BOLD" "$RESET"
 DISK_PATHS=()
 while read -r disk_path; do
@@ -258,23 +258,19 @@ UUID=7460557760554152 /mnt/Download ntfs3 defaults,noatime,uid=1000,gid=1000,uma
 FSTAB_EOF
 fi
 
-# ---------- Chroot beállítások ----------
-export HOSTNAME USERNAME ROOTPASSWORD PASSWORD DE_CHOICE GPU_CHOICE INSTALL_AUR_APPS RESTORE_XFCE FORMAT_HOME
-arch-chroot /mnt /bin/bash <<CHROOT_EOF
-set -Eeuo pipefail
-set +u
-ln -sf /usr/share/zoneinfo/Europe/Budapest /etc/localtime
-hwclock --systohc
+# ---------- Alapvető beállítások chroot előtt / írása ----------
+ln -sf /usr/share/zoneinfo/Europe/Budapest /mnt/etc/localtime
+arch-chroot /mnt hwclock --systohc
 
 for locale_line in 'hu_HU.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8'; do
-  grep -qxF "\$locale_line" /etc/locale.gen || printf '%s\n' "\$locale_line" >> /etc/locale.gen
+  grep -qxF "$locale_line" /mnt/etc/locale.gen || printf '%s\n' "$locale_line" >> /mnt/etc/locale.gen
 done
-locale-gen
-printf 'LANG=hu_HU.UTF-8\n' > /etc/locale.conf
-printf '%s\n' "\$HOSTNAME" > /etc/hostname
+arch-chroot /mnt locale-gen
+printf 'LANG=hu_HU.UTF-8\n' > /mnt/etc/locale.conf
+printf '%s\n' "$HOSTNAME" > /mnt/etc/hostname
 
-mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<'KB_EOF'
+mkdir -p /mnt/etc/X11/xorg.conf.d
+cat > /mnt/etc/X11/xorg.conf.d/00-keyboard.conf <<'KB_EOF'
 Section "InputClass"
     Identifier "system-keyboard"
     MatchIsKeyboard "on"
@@ -282,42 +278,43 @@ Section "InputClass"
 EndSection
 KB_EOF
 
-sed -i 's/^#Color$/Color/' /etc/pacman.conf || true
-grep -q '^ILoveCandy$' /etc/pacman.conf || sed -i '/^Color$/a ILoveCandy' /etc/pacman.conf
-sed -i 's/^#ParallelDownloads = 5$/ParallelDownloads = 9/' /etc/pacman.conf || true
-grep -q '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+sed -i 's/^#Color$/Color/' /mnt/etc/pacman.conf || true
+grep -q '^ILoveCandy$' /mnt/etc/pacman.conf || sed -i '/^Color$/a ILoveCandy' /mnt/etc/pacman.conf
+sed -i 's/^#ParallelDownloads = 5$/ParallelDownloads = 9/' /mnt/etc/pacman.conf || true
+grep -q '^\[multilib\]' /mnt/etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /mnt/etc/pacman.conf
 
-case "\$DE_CHOICE" in
-  1) systemctl enable lightdm
-     printf '\n[Seat:*]\ndisplay-setup-script=numlockx on\n' >> /etc/lightdm/lightdm.conf ;;
-  2) systemctl enable gdm ;;
-  3) systemctl enable sddm ;;
+case "$DE_CHOICE" in
+  1) arch-chroot /mnt systemctl enable lightdm
+     printf '\n[Seat:*]\ndisplay-setup-script=numlockx on\n' >> /mnt/etc/lightdm/lightdm.conf ;;
+  2) arch-chroot /mnt systemctl enable gdm ;;
+  3) arch-chroot /mnt systemctl enable sddm ;;
 esac
-systemctl enable NetworkManager
+arch-chroot /mnt systemctl enable NetworkManager
 
-printf 'root:%s\n' "\$ROOTPASSWORD" | chpasswd
+# Biztonságos jelszóbeállítás közvetlen chroot pipe-pal (elkerülve a változóátadási hibákat)
+printf 'root:%s\n' "$ROOTPASSWORD" | arch-chroot /mnt chpasswd
 
-if id "\$USERNAME" &>/dev/null; then
-  printf 'A(z) \$USERNAME felhasználó már létezik a meglévő /home-ban, jelszó frissítése...\n'
-  printf '%s:%s\n' "\$USERNAME" "\$PASSWORD" | chpasswd
+if arch-chroot /mnt id "$USERNAME" &>/dev/null; then
+  printf 'A(z) %s felhasználó már létezik a meglévő /home-ban, jelszó frissítése...\n' "$USERNAME"
+  printf '%s:%s\n' "$USERNAME" "$PASSWORD" | arch-chroot /mnt chpasswd
 else
-  useradd -m -G wheel,storage,power,input,vboxusers -s /bin/bash "\$USERNAME"
-  printf '%s:%s\n' "\$USERNAME" "\$PASSWORD" | chpasswd
+  arch-chroot /mnt useradd -m -G wheel,storage,power,input,vboxusers -s /bin/bash "$USERNAME"
+  printf '%s:%s\n' "$USERNAME" "$PASSWORD" | arch-chroot /mnt chpasswd
 fi
 
-printf '%%wheel ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/10-wheel
-chmod 0440 /etc/sudoers.d/10-wheel
+printf '%%wheel ALL=(ALL:ALL) ALL\n' > /mnt/etc/sudoers.d/10-wheel
+chmod 0440 /mnt/etc/sudoers.d/10-wheel
 
-sed -i 's/^#\?GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=true/' /etc/default/grub || printf '\nGRUB_DISABLE_OS_PROBER=true\n' >> /etc/default/grub
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
-grub-mkconfig -o /boot/grub/grub.cfg
+sed -i 's/^#\?GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=true/' /mnt/etc/default/grub || printf '\nGRUB_DISABLE_OS_PROBER=true\n' >> /mnt/etc/default/grub
+arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --removable
+arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 
-printf 'vboxdrv\n' > /etc/modules-load.d/virtualbox.conf
+printf 'vboxdrv\n' > /mnt/etc/modules-load.d/virtualbox.conf
 
-runuser -u "\$USERNAME" -- env HOME="/home/\$USERNAME" xdg-user-dirs-update || true
+arch-chroot /mnt runuser -u "$USERNAME" -- env HOME="/home/$USERNAME" xdg-user-dirs-update || true
 
-if ! grep -q "alias y='yay -Syu'" "/home/\$USERNAME/.bashrc" 2>/dev/null; then
-  cat >> "/home/\$USERNAME/.bashrc" <<'BASHRC_EOF'
+if ! grep -q "alias y='yay -Syu'" "/mnt/home/$USERNAME/.bashrc" 2>/dev/null; then
+  cat >> "/mnt/home/$USERNAME/.bashrc" <<'BASHRC_EOF'
 alias cl='clear'
 alias e='exit'
 alias y='yay -Syu'
@@ -325,28 +322,27 @@ alias sr='sudo reboot'
 alias in='sudo pacman -S'
 fastfetch
 BASHRC_EOF
-  chown "\$USERNAME:\$USERNAME" "/home/\$USERNAME/.bashrc"
+  arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/.bashrc"
 fi
 
-if [[ "\$INSTALL_AUR_APPS" == igen ]]; then
-  useradd -m -s /bin/bash aurbuilder
-  printf 'aurbuilder ALL=(ALL:ALL) NOPASSWD: /usr/bin/pacman\n' > /etc/sudoers.d/aurbuilder
-  chmod 0440 /etc/sudoers.d/aurbuilder
+if [[ "$INSTALL_AUR_APPS" == igen ]]; then
+  arch-chroot /mnt useradd -m -s /bin/bash aurbuilder
+  printf 'aurbuilder ALL=(ALL:ALL) NOPASSWD: /usr/bin/pacman\n' > /mnt/etc/sudoers.d/aurbuilder
+  chmod 0440 /mnt/etc/sudoers.d/aurbuilder
   for pkg in yay-bin google-chrome rustdesk-bin; do
-    runuser -u aurbuilder -- bash -lc "cd /tmp && rm -rf '\$pkg' && git clone 'https://aur.archlinux.org/\$pkg.git' '\$pkg' && cd '\$pkg' && makepkg -si --noconfirm"
+    arch-chroot /mnt runuser -u aurbuilder -- bash -lc "cd /tmp && rm -rf '$pkg' && git clone 'https://aur.archlinux.org/$pkg.git' '$pkg' && cd '$pkg' && makepkg -si --noconfirm"
   done
-  userdel -r aurbuilder || true
-  rm -f /etc/sudoers.d/aurbuilder
-  systemctl enable rustdesk.service || true
+  arch-chroot /mnt userdel -r aurbuilder || true
+  rm -f /mnt/etc/sudoers.d/aurbuilder
+  arch-chroot /mnt systemctl enable rustdesk.service || true
 fi
 
-if [[ "\$RESTORE_XFCE" == igen ]]; then
-  profile='/home/'"\$USERNAME"'/xfce-backup.tar.gz'
-  curl --fail --location --show-error --output "\$profile" 'https://raw.githubusercontent.com/pbalee/arch-install/main/xfce-backup.tar.gz'
-  tar -xzf "\$profile" -C "/home/\$USERNAME"
-  rm -f "\$profile"
-  chown -R "\$USERNAME:\$USERNAME" "/home/\$USERNAME/.config"
+if [[ "$RESTORE_XFCE" == igen ]]; then
+  profile="/home/$USERNAME/xfce-backup.tar.gz"
+  curl --fail --location --show-error --output "/mnt$profile" 'https://raw.githubusercontent.com/pbalee/arch-install/main/xfce-backup.tar.gz'
+  arch-chroot /mnt tar -xzf "$profile" -C "/home/$USERNAME"
+  rm -f "/mnt$profile"
+  arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.config"
 fi
-CHROOT_EOF
 
 ok "Telepítés sikeresen lefutott! Indítsd újra a gépet."
