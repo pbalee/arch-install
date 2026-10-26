@@ -1,0 +1,80 @@
+# ──────────────────────────────────────────────────────────────
+#  LINK START (blackice) — a neon HUD hacker theme for GRUB 2
+#  feat. Arch-chan (illust: ravimo, pixiv 101776734)
+#
+#  palette : void black · neon blue #23AAFF · ice #8CE1FF
+#  fonts   : JetBrains Mono, embedded as "Blackice Term" (.pf2)
+#  layout  : percentages align with the HUD panel baked into
+#            background.png (1920x1080 reference, stretched)
+# ──────────────────────────────────────────────────────────────
+
+title-text: ""
+desktop-image: "background.png"
+desktop-image-scale-method: "stretch"
+desktop-color: "#020406"
+
+terminal-font: "Blackice Term Regular 14"
+terminal-box: "terminal_box_*.png"
+terminal-left: "10%"
+terminal-top: "10%"
+terminal-width: "80%"
+terminal-height: "80%"
+terminal-border: "0"
+
+# ── boot entry list (inside the baked HUD panel) ──────────────
++ boot_menu {
+    left = 12%
+    top = 34%
+    width = 40%
+    height = 38%
+    item_font = "Blackice Term Regular 16"
+    selected_item_font = "Blackice Term Bold 16"
+    item_color = "#6E86A0"
+    selected_item_color = "#DEF0FF"
+    item_height = 44
+    item_spacing = 4
+    item_padding = 12
+    icon_width = 24
+    icon_height = 24
+    item_icon_space = 16
+    selected_item_pixmap_style = "select_*.png"
+    scrollbar = true
+    scrollbar_width = 6
+    scrollbar_thumb = "sb_thumb_*.png"
+    scrollbar_frame = "sb_frame_*.png"
+}
+
+# ── timeout progress bar ──────────────────────────────────────
++ progress_bar {
+    id = "__timeout__"
+    left = 12%
+    top = 77%
+    width = 40%
+    height = 14
+    show_text = false
+    bar_style = "progress_frame_*.png"
+    highlight_style = "progress_hl_*.png"
+}
+
+# ── countdown readout ─────────────────────────────────────────
++ label {
+    id = "__timeout__"
+    left = 12%
+    top = 81%
+    width = 40%
+    align = "center"
+    font = "Blackice Term Regular 14"
+    color = "#23AAFF"
+    text = "AUTO-EXEC IN %d SEC :: PRESS ANY KEY TO ABORT"
+}
+
+# ── key hints ─────────────────────────────────────────────────
++ label {
+    left = 0
+    top = 93%
+    width = 100%
+    align = "center"
+    font = "Blackice Term Regular 12"
+    color = "#4A5E78"
+    text = "[↑/↓] SELECT      [ENTER] EXECUTE      [E] EDIT      [C] CONSOLE"
+}
