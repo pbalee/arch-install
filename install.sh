@@ -93,10 +93,9 @@ banner() {
              '-._______________.-'
 ART
   printf '%s' "$RST"
-  printf '%s   _   ___ ___ _  _ _____   ___ _  _ ___ _____ ___ __  __   ___   __ __%s\n' "$WHT" "$RST"
-  printf '%s            A G E N T   S Y S T E M   2 . 0%s\n' "$WHT" "$RST"
-  printf '%s         -- CYBERNETIC AUDIO INTERFACE --%s\n\n' "$CYN" "$RST"
-  printf '   Arch Linux automata telepítő  |  Blackice GRUB  |  UEFI\n\n'
+  printf '%s       B L U E L I G H T   ::   A R C H   I N S T A L L E R%s\n' "$WHT" "$RST"
+  printf '%s              [ Customized by pbalee ]%s\n\n' "$CYN" "$RST"
+  printf '   Arch Linux Automata Telepítő  |  Blackice GRUB  |  UEFI\n\n'
 }
 
 # ------------------------------------------------------- pacman.conf --------
