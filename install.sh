@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  "AGENT SYSTEM 2.0"   (pbalee, v3.3)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.4)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
@@ -8,7 +8,7 @@
 # =============================================================================
 set -uo pipefail
 
-############################ BEÁLLÍTÁSOk – szabadon átírhatod ###################
+############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
 GH_USER="pbalee"
 GH_REPO="arch-install"
 GH_BRANCH="main"
@@ -29,7 +29,7 @@ GAMES_UUID="9471a888-07ec-45ed-b516-eb6aa1513a64"   # ext4, /Games
 DOWNLOAD_UUID="7460557760554152"                    # ntfs, /Download
 
 LOG_FILE="/tmp/arch-install.log"
-BACKTITLE="Arch Linux Telepítő  ::  AGENT SYSTEM 2.0"
+BACKTITLE="Arch Linux Telepítő  ::  BLUELIGHT SYSTEM"
 #################################################################################
 
 export LANG=C.UTF-8
@@ -651,8 +651,11 @@ phase2() {
 
   runuser -l "$I_USER" -c "LANG=$I_LOCALE xdg-user-dirs-update" 2>/dev/null
 
-  say "GitHub képek letöltése (Avatar, Wallpaper, Menu)"
-  local pic_dir="/home/$I_USER/Pictures"
+  say "GitHub képek letöltése a lokalizált felhasználói mappába"
+  local pic_dir
+  pic_dir=$(runuser -l "$I_USER" -c "xdg-user-dir PICTURES" 2>/dev/null)
+  [[ -n "$pic_dir" ]] || pic_dir="/home/$I_USER/Képek"
+  
   mkdir -p "$pic_dir"
   curl -fsSL -o "$pic_dir/Avatar.png" "https://raw.githubusercontent.com/${I_GH_USER}/${I_GH_REPO}/${I_GH_BRANCH}/Pictures/Avatar.png" || true
   curl -fsSL -o "$pic_dir/Wallpaper.jpg" "https://raw.githubusercontent.com/${I_GH_USER}/${I_GH_REPO}/${I_GH_BRANCH}/Pictures/Wallpaper.jpg" || true
@@ -720,10 +723,8 @@ Name=XScreensaver
 EOF
       fi
 
-      # Whisker menü ikon beállítása a menu.png-re (ha létezik)
       if [[ -f "$pic_dir/menu.png" ]]; then
         mkdir -p "/home/$I_USER/.config/xfce4/panel"
-        # XFConf beállítás a Whisker menü ikonjára
         runuser -l "$I_USER" -c "xfconf-query -c xfce4-panel -p /plugins/plugin-$(xfconf-query -c xfce4-panel -l -v | grep whiskermenu | awk '{print $1}' | grep -o '[0-9]*' | head -n1) -s '$pic_dir/menu.png' 2>/dev/null || true"
       fi
 
