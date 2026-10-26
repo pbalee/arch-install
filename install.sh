@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  "AGENT SYSTEM 2.0"   (pbalee, v3.2)
+#  Arch Linux automata telepítő  –  "AGENT SYSTEM 2.0"   (pbalee, v3.3)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
@@ -8,7 +8,7 @@
 # =============================================================================
 set -uo pipefail
 
-############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
+############################ BEÁLLÍTÁSOk – szabadon átírhatod ###################
 GH_USER="pbalee"
 GH_REPO="arch-install"
 GH_BRANCH="main"
@@ -94,9 +94,9 @@ banner() {
 ART
   printf '%s' "$RST"
   printf '%s   _   ___ ___ _  _ _____   ___ _  _ ___ _____ ___ __  __   ___   __ __%s\n' "$WHT" "$RST"
-  printf '%s                B L U E L I G H T M   2 . 0%s\n' "$WHT" "$RST"
-  printf '%s         -- CYBERNETIC MULTIMEDIA INTERFACE --%s\n\n' "$CYN" "$RST"
-  printf '   Arch Linux automata telepítő  |  GRUB + os-prober  |  UEFI\n\n'
+  printf '%s            A G E N T   S Y S T E M   2 . 0%s\n' "$WHT" "$RST"
+  printf '%s         -- CYBERNETIC AUDIO INTERFACE --%s\n\n' "$CYN" "$RST"
+  printf '   Arch Linux automata telepítő  |  Blackice GRUB  |  UEFI\n\n'
 }
 
 # ------------------------------------------------------- pacman.conf --------
@@ -261,7 +261,7 @@ ask_disk_new() {
     USE_HOME=1
     local root_def=$DEFAULT_ROOT_GIB
     if (( DISK_GIB < 150 )); then root_def=$(( DISK_GIB / 2 )); fi
-    ROOT_GIB=$(ask_int "Root mérete" "A root (/) partíció mérete GiB-ben." "$root_def" 15 "$DISK_GIB") || cancel
+    ROOT_GIB=$(ask_int "Root mérete" "A root (/) partíció mérete GiB-ben.\nA /home a maradék helyet kapja." "$root_def" 15 "$DISK_GIB") || cancel
     HOME_FS=$(pick_fs "/home fájlrendszere") || cancel
   fi
   ROOT_FS=$(pick_fs "Root (/) fájlrendszere") || cancel
@@ -275,7 +275,7 @@ ask_disk_new() {
 }
 
 ask_disk_existing() {
-  msg "Meglévő partíciók" "Válaszd ki a partíciókat."
+  msg "Meglévő partíciók" "Válaszd ki a partíciókat. A meglévő /home adatait is itt döntheted el."
   ESP_PART=$(pick_part "EFI (boot) partíció" "Melyik az EFI System Partition (FAT32)?") || cancel
   USED_PARTS+=("$ESP_PART")
   local esp_fs; esp_fs=$(blkid -s TYPE -o value "$ESP_PART" 2>/dev/null || true)
@@ -293,12 +293,13 @@ ask_disk_existing() {
     USE_HOME=1
     HOME_PART=$(pick_part "/home partíció" "Melyik partíció legyen a /home?") || cancel
     USED_PARTS+=("$HOME_PART")
-    if ynn "/home formázása" "Formázzam a /home partíciót?\n\nNEM = meglévő adatok megmaradnak."; then
+    if ynn "/home formázása" "Formázzam a /home partíciót?\n\nIGEN = Minden adat törlődik tiszta lappal.\nNEM = A meglévő fájlok és beállítások MEGMARADNAK."; then
       FORMAT_HOME=1
       HOME_FS=$(pick_fs "/home fájlrendszere") || cancel
     else
       FORMAT_HOME=0
       HOME_FS=$(blkid -s TYPE -o value "$HOME_PART" 2>/dev/null || true)
+      [[ -n $HOME_FS ]] || die "A $HOME_PART partíción nem ismerhető fel fájlrendszer."
     fi
   fi
 
@@ -516,7 +517,6 @@ phase1() {
   locale-gen
   echo "LANG=$I_LOCALE" > /etc/locale.conf
   
-  # Konzolkiosztás és betűkészlet beállítása
   cat > /etc/vconsole.conf <<EOF
 KEYMAP=$I_KEYMAP
 FONT=$I_FONT
@@ -596,15 +596,22 @@ ARCHCLEAN
   add_aliases "/home/$I_USER/.bashrc"
   chown -R "$I_USER:$I_USER" "/home/$I_USER"
 
-  say "Szolgáltatások engedélyezése (NetworkManager, Bluetooth, fstrim, selyem)"
+  say "Szolgáltatások engedélyezése"
   systemctl enable NetworkManager bluetooth fstrim.timer paccache.timer
   has samba && systemctl enable smb nmb
   
   case $I_DE in
     xfce)
       systemctl enable lightdm
-      sed -i 's|^#\?greeter-session=.*|greeter-session=lightdm-gtk-greeter|' /etc/lightdm/lightdm.conf
-      sed -i 's|^#\?display-setup-script=.*|display-setup-script=numlockx on|' /etc/lightdm/lightdm.conf ;;
+      sed -i 's/^#\?greeter-session=.*/greeter-session=lightdm-gtk-greeter/' /etc/lightdm/lightdm.conf
+      sed -i 's/^#\?display-setup-script=.*/display-setup-script=numlockx on/' /etc/lightdm/lightdm.conf
+      # LightDM X11 kényszerítés (Wayland tiltása)
+      if grep -q "^#\?user-session=" /etc/lightdm/lightdm.conf; then
+        sed -i 's/^#\?user-session=.*/user-session=xfce/' /etc/lightdm/lightdm.conf
+      else
+        sed -i '/\[Seat:\*\]/a user-session=xfce' /etc/lightdm/lightdm.conf
+      fi
+      ;;
     gnome) systemctl enable gdm ;;
     kde)   systemctl enable sddm ;;
   esac
@@ -619,7 +626,6 @@ ARCHCLEAN
     if [[ -d "$extracted_dir/blackice" ]]; then
       cp -r "$extracted_dir/blackice" "$grub_dir/themes/blackice"
       
-      # GRUB beállítások frissítése
       setvar() {
         if grep -q "^#\?$1=" /etc/default/grub; then sed -i "s|^#\?$1=.*|$1=$2|" /etc/default/grub
         else echo "$1=$2" >> /etc/default/grub; fi
@@ -635,8 +641,7 @@ ARCHCLEAN
 
   mkdir -p /run/udev
   [[ -d /udev-host ]] && mount --bind /udev-host /run/udev
-  grub-install --target=x86_64-efi --efi-directory="$I_ESP" --bootloader-id=GRUB --recheck || \
-    grub-install --target=x86_64-efi --efi-directory="$I_ESP" --bootloader-id=GRUB --removable --recheck
+  grub-install --target=x86_64-efi --efi-directory="$I_ESP" --bootloader-id=GRUB --recheck --removable
   grub-mkconfig -o "$grub_dir/grub.cfg"
   mountpoint -q /run/udev && umount /run/udev
 }
@@ -647,13 +652,27 @@ phase2() {
 
   runuser -l "$I_USER" -c "LANG=$I_LOCALE xdg-user-dirs-update" 2>/dev/null
 
+  say "GitHub képek letöltése (Avatar, Wallpaper, Menu)"
+  local pic_dir="/home/$I_USER/Pictures"
+  mkdir -p "$pic_dir"
+  curl -fsSL -o "$pic_dir/Avatar.png" "https://raw.githubusercontent.com/${I_GH_USER}/${I_GH_REPO}/${I_GH_BRANCH}/Pictures/Avatar.png" || true
+  curl -fsSL -o "$pic_dir/Wallpaper.jpg" "https://raw.githubusercontent.com/${I_GH_USER}/${I_GH_REPO}/${I_GH_BRANCH}/Pictures/Wallpaper.jpg" || true
+  curl -fsSL -o "$pic_dir/menu.png" "https://raw.githubusercontent.com/${I_GH_USER}/${I_GH_REPO}/${I_GH_BRANCH}/Pictures/menu.png" || true
+
+  # XFCE Wallpaper beállítása
+  if [[ -f "$pic_dir/Wallpaper.jpg" && "$I_DE" == "xfce" ]]; then
+    runuser -l "$I_USER" -c "xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -s '$pic_dir/Wallpaper.jpg' 2>/dev/null || true"
+  fi
+
   if has profile && [[ $I_DE == xfce ]]; then
     if [[ $I_HOME_NEW == 1 ]]; then
       say "XFCE profil visszatöltése"
-      curl -fsSL -o /tmp/xfce-backup.tar.gz "$I_XFCE_URL" && tar -xzf /tmp/xfce-backup.tar.gz -C "/home/$I_USER" && chown -R "$I_USER:$I_USER" "/home/$I_USER"
+      curl -fsSL -o /tmp/xfce-backup.tar.gz "$I_XFCE_URL" && tar -xzf /tmp/xfce-backup.tar.gz -C "/home/$I_USER" || true
       rm -f /tmp/xfce-backup.tar.gz
     fi
   fi
+
+  chown -R "$I_USER:$I_USER" "/home/$I_USER"
 
   if has flatpak; then
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
@@ -672,12 +691,10 @@ phase2() {
     userdel -r builder 2>/dev/null
     rm -f /etc/sudoers.d/99-builder
 
-    # KSuperKey és GLava autostart + XScreenSaver konfiguráció
     if [[ $I_DE == xfce ]]; then
       mkdir -p "/home/$I_USER/.config/autostart" "/home/$I_USER/.config/glava"
       cp -r /etc/xdg/glava/* "/home/$I_USER/.config/glava/" 2>/dev/null || true
 
-      # ksuperkey autostart
       cat > "/home/$I_USER/.config/autostart/ksuperkey.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -686,7 +703,6 @@ Exec=ksuperkey
 X-GNOME-Autostart-enabled=true
 EOF
 
-      # GLava autostart
       cat > "/home/$I_USER/.config/autostart/glava.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -695,7 +711,6 @@ X-GNOME-Autostart-enabled=true
 Name=GLava
 EOF
 
-      # XScreenSaver autostart (ha felkerült)
       if command -v xscreensaver >/dev/null 2>&1; then
         cat > "/home/$I_USER/.config/autostart/xscreensaver.desktop" <<EOF
 [Desktop Entry]
@@ -704,6 +719,13 @@ Exec=xscreensaver -nosplash
 X-GNOME-Autostart-enabled=true
 Name=XScreensaver
 EOF
+      fi
+
+      # Whisker menü ikon beállítása a menu.png-re (ha létezik)
+      if [[ -f "$pic_dir/menu.png" ]]; then
+        mkdir -p "/home/$I_USER/.config/xfce4/panel"
+        # XFConf beállítás a Whisker menü ikonjára
+        runuser -l "$I_USER" -c "xfconf-query -c xfce4-panel -p /plugins/plugin-$(xfconf-query -c xfce4-panel -l -v | grep whiskermenu | awk '{print $1}' | grep -o '[0-9]*' | head -n1) -s '$pic_dir/menu.png' 2>/dev/null || true"
       fi
 
       chown -R "$I_USER:$I_USER" "/home/$I_USER/.config"
@@ -732,7 +754,7 @@ configure_system() {
   printf '%s:%s\n' root "$ROOTPW"        | arch-chroot /mnt chpasswd
   printf '%s:%s\n' "$USERNAME_" "$USERPW" | arch-chroot /mnt chpasswd
 
-  step "Chroot fázis 2 (AUR, profilok, GLava)"
+  step "Chroot fázis 2 (AUR, profilok, Képek)"
   arch-chroot /mnt /root/chroot-setup.sh phase2 2>&1 | tee -a "$LOG_FILE"
 
   rm -f /mnt/root/install.env /mnt/root/chroot-setup.sh
