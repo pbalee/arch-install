@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.6)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.9)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
@@ -20,6 +20,8 @@ TIMEZONE="Europe/Budapest"
 MAIN_LOCALE="hu_HU.UTF-8"
 KEYMAP="hu"
 CONSOLE_FONT="ter-122b"
+AUDACIOUS_SKIN="Winamp3_Classified_v5.5.wsz"   # a repó "Winamp Skins/" mappájából (üres/hiányzó = az első .wsz)
+SOLIDCRAFT_URL="https://github.com/bherbruck/solidcraft/releases/latest/download"
 MIRROR_COUNTRIES="Hungary,Austria,Slovakia,Czechia,Germany,Romania"   # reflector tükrök
 
 ESP_SIZE_GIB=1          # EFI/boot partíció mérete (új partíciózásnál)
@@ -229,6 +231,19 @@ ask_software() {
       amd    "AMD (mesa + vulkan-radeon)" \
       intel  "Intel (mesa + vulkan-intel + media driver)") || cancel
 
+  GRUBTHEME=$(menu "GRUB téma" "Melyik GRUB témát használjuk?" \
+      blackice    "Blackice (a saját GitHub-repódból)" \
+      hyperfluent "HyperFluent - Arch változat (Coopydood, GPL-3.0)" \
+      none        "Nincs téma (alap GRUB)") || cancel
+
+  DARKTHEME=none
+  if [[ $DE == xfce ]]; then
+    DARKTHEME=$(menu "Sötét téma" "Melyik sötét témát használjuk az XFCE-ben?\n(GTK + ablakkeret + Papirus-Dark ikonok + Qt-programok is)" \
+        arc     "Arc-Dark      - klasszikus, kékesszürke (alapértelmezett)" \
+        materia "Materia-dark  - Material Design, élénkebb kiemelés" \
+        none    "Nincs         - alap (világos) téma") || cancel
+  fi
+
   local on_xfce=off
   [[ $DE == xfce ]] && on_xfce=on
   EXTRAS=$(d --separate-output --title "Extra csomagok és szolgáltatások" \
@@ -243,6 +258,8 @@ ask_software() {
       flatpak     "Flatpak + Flathub"                                 on \
       samba       "Samba fájlmegosztás (WORKGROUP)"                   on \
       media       "Média eszközök: yt-dlp, ffmpeg"                    on \
+      freecad     "FreeCAD (3D CAD)"                                  on \
+      solidcraft  "SolidCraft CAD (GitHub release AppImage)"         on \
       profile     "XFCE profil visszatöltése GitHubról"               "$on_xfce" \
       drives      "Extra meghajtók fstab-ba (/Games, /Download)"      off) || cancel
 }
@@ -537,7 +554,7 @@ build_package_list() {
         gnome-disk-utility bluez bluez-utils blueberry
         pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol
         noto-fonts noto-fonts-emoji ttf-dejavu ttf-liberation
-        firefox firefox-i18n-hu keepassxc qbittorrent audacious)
+        firefox firefox-i18n-hu keepassxc qbittorrent audacious okular fastfetch accountsservice)
 
   [[ $ROOT_FS == btrfs || $HOME_FS == btrfs ]] && PKGS+=(btrfs-progs)
   [[ $ROOT_FS == xfs   || $HOME_FS == xfs   ]] && PKGS+=(xfsprogs)
@@ -547,7 +564,8 @@ build_package_list() {
                   xfce4-taskmanager xfce4-terminal xfce4-notifyd xfce4-screenshooter xfce4-pulseaudio-plugin
                   xfce4-whiskermenu-plugin xfconf xfdesktop xfwm4 thunar thunar-archive-plugin
                   thunar-media-tags-plugin thunar-volman file-roller mousepad ristretto galculator parole
-                  lightdm lightdm-gtk-greeter numlockx network-manager-applet adwaita-icon-theme xdg-user-dirs) ;;
+                  lightdm lightdm-gtk-greeter numlockx network-manager-applet adwaita-icon-theme xdg-user-dirs
+                  mugshot xorg-xrandr) ;;
     gnome) PKGS+=(xorg-server gnome gdm xdg-user-dirs) ;;
     kde)   PKGS+=(xorg-server plasma-meta sddm konsole dolphin kate ark xdg-user-dirs) ;;
     none)  PKGS+=(xdg-user-dirs) ;;
@@ -557,16 +575,25 @@ build_package_list() {
     nvidia) PKGS+=(nvidia-open nvidia-settings nvidia-utils lib32-nvidia-utils opencl-nvidia libva-nvidia-driver) ;;
     amd)    PKGS+=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver) ;;
     intel)  PKGS+=(mesa lib32-mesa intel-media-driver vulkan-intel lib32-vulkan-intel) ;;
+    other)  has gaming && PKGS+=(mesa lib32-mesa vulkan-swrast lib32-vulkan-swrast) ;;
   esac
 
   has office  && PKGS+=(libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu)
-  has gaming  && PKGS+=(lutris gamemode lib32-gamemode gamescope mangohud wine wine-gecko wine-mono
+  has gaming  && PKGS+=(steam lutris gamemode lib32-gamemode gamescope mangohud wine wine-gecko wine-mono
                         lib32-freetype2 lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader)
   has vbox    && PKGS+=(virtualbox virtualbox-host-dkms)
+  has freecad && PKGS+=(freecad)
+  has solidcraft && PKGS+=(fuse2 fuse3)
   has flatpak && PKGS+=(flatpak)
   has samba   && PKGS+=(samba)
   has media   && PKGS+=(yt-dlp ffmpeg)
   [[ $DE == xfce ]] && has screensaver && PKGS+=(xscreensaver)
+  if [[ $DE == xfce ]]; then
+    case $DARKTHEME in
+      arc)     PKGS+=(arc-gtk-theme papirus-icon-theme kvantum kvantum-qt5) ;;
+      materia) PKGS+=(materia-gtk-theme papirus-icon-theme kvantum kvantum-qt5 kvantum-theme-materia) ;;
+    esac
+  fi
 }
 
 filter_packages() {
@@ -629,6 +656,10 @@ write_chroot_script() {
     printf 'I_HOME_NEW=%q\n' "$home_new"
     printf 'I_XFCE_URL=%q\n' "$XFCE_PROFILE_URL"
     printf 'I_MIRRORS=%q\n' "$MIRROR_COUNTRIES"
+    printf 'I_GRUBTHEME=%q\n' "$GRUBTHEME"
+    printf 'I_DARK=%q\n' "$DARKTHEME"
+    printf 'I_AUD_SKIN=%q\n' "$AUDACIOUS_SKIN"
+    printf 'I_SC_URL=%q\n' "$SOLIDCRAFT_URL"
     printf 'I_GH_USER=%q\n' "$GH_USER"
     printf 'I_GH_REPO=%q\n' "$GH_REPO"
     printf 'I_GH_BRANCH=%q\n' "$GH_BRANCH"
@@ -641,6 +672,12 @@ set -u
 source /root/install.env
 has() { grep -qx "$1" <<<"$I_EXTRAS"; }
 need_aur() { has aur || has rustdesk || has glava; }
+case ${I_DARK:-none} in
+  arc)     GTK_THEME=Arc-Dark;      WM_THEME=Arc-Dark;      KV_THEME=KvArcDark ;;
+  materia) GTK_THEME=Materia-dark;  WM_THEME=Materia-dark;  KV_THEME=MateriaDark ;;
+  *)       GTK_THEME="";            WM_THEME="";            KV_THEME="" ;;
+esac
+ICON_THEME=Papirus-Dark
 say()  { printf '\n\e[1;36m  -> %s\e[0m\n' "$*"; }
 warn() { printf '\e[1;33m  [!] %s\e[0m\n' "$*"; }
 
@@ -651,7 +688,7 @@ alias e='exit'
 alias sr='sudo reboot'
 alias in='sudo pacman -S '
 alias rem='arch-clean'
-alias up='sudo pacman -Syu'
+alias u='arch-update'
 alias ll='ls -lah --color=auto'
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
@@ -667,7 +704,7 @@ fix_home_owner() {
   if [[ $I_HOME_NEW == 1 || $(stat -c %u "$h") != "$want" ]]; then
     chown -R "$I_USER:$I_USER" "$h"
   else
-    for f in .bashrc .xscreensaver .config/autostart .config/glava .config/xfce4 .local/bin; do
+    for f in .bashrc .face .xscreensaver .config/autostart .config/glava .config/xfce4 .config/audacious .config/gtk-3.0 .config/gtk-4.0 .config/Kvantum .config/kdeglobals .local/bin .local/share/audacious; do
       [[ -e $h/$f ]] && chown -R "$I_USER:$I_USER" "$h/$f"
     done
   fi
@@ -769,6 +806,17 @@ sudo journalctl --vacuum-time=7d
 echo "Takarítás kész!"
 ARCHCLEAN
   chmod +x /usr/local/bin/arch-clean
+  cat > /usr/local/bin/arch-update <<'ARCHUPD'
+#!/usr/bin/env bash
+echo "==> Pacman csomagok frissítése"
+sudo pacman -Syu
+if command -v flatpak >/dev/null 2>&1; then
+  echo "==> Flatpak csomagok frissítése"
+  flatpak update -y
+fi
+echo "Frissítés kész!"
+ARCHUPD
+  chmod +x /usr/local/bin/arch-update
   add_aliases /etc/skel/.bashrc
   add_aliases /root/.bashrc
 
@@ -816,6 +864,14 @@ EOF
       else
         sed -i '/\[Seat:\*\]/a user-session=xfce' /etc/lightdm/lightdm.conf
       fi
+      if [[ -n $GTK_THEME && -f /etc/lightdm/lightdm-gtk-greeter.conf ]]; then
+        ini_set /etc/lightdm/lightdm-gtk-greeter.conf greeter theme-name "$GTK_THEME"
+        ini_set /etc/lightdm/lightdm-gtk-greeter.conf greeter icon-theme-name "$ICON_THEME"
+      fi
+      if [[ -n $KV_THEME ]]; then
+        # Qt-programok (KeePassXC, qBittorrent, Okular...) sötét témája: Kvantum stílus + GTK-s ikon/betű
+        grep -q '^QT_STYLE_OVERRIDE=' /etc/environment 2>/dev/null || printf 'QT_STYLE_OVERRIDE=kvantum\nQT_QPA_PLATFORMTHEME=gtk3\n' >> /etc/environment
+      fi
       ;;
     gnome) systemctl enable gdm ;;
     kde)   systemctl enable sddm ;;
@@ -833,25 +889,46 @@ EOF
     sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)"|\1 nvidia-drm.modeset=1 nvidia-drm.fbdev=1"|' /etc/default/grub
   fi
 
-  say "Blackice GRUB téma telepítése GitHubról"
   mkdir -p "$grub_dir/themes"
-  if curl -fsSL -o /tmp/repo.tar.gz "https://github.com/${I_GH_USER}/${I_GH_REPO}/archive/refs/heads/${I_GH_BRANCH}.tar.gz" \
-     && tar -xzf /tmp/repo.tar.gz -C /tmp; then
-    local extracted_dir="/tmp/${I_GH_REPO}-${I_GH_BRANCH}"
-    if [[ -f "$extracted_dir/blackice/theme.txt" ]]; then
-      rm -rf "$grub_dir/themes/blackice"
-      cp -r "$extracted_dir/blackice" "$grub_dir/themes/blackice"
-      setvar GRUB_THEME "\"$grub_dir/themes/blackice/theme.txt\""
-      setvar GRUB_GFXMODE "\"1920x1080,auto\""
-      setvar GRUB_GFXPAYLOAD_LINUX keep
-      sed -i -E 's|^(GRUB_TERMINAL(_OUTPUT)?=.*console.*)|#\1|' /etc/default/grub
-    else
-      warn "A repóban nincs blackice/theme.txt, téma nélkül folytatom."
-    fi
-  else
-    warn "A GRUB téma letöltése nem sikerült, téma nélkül folytatom."
-  fi
-  rm -rf /tmp/repo.tar.gz "/tmp/${I_GH_REPO}-${I_GH_BRANCH}" 2>/dev/null || true
+  grub_theme_on() {   # <téma-mappa neve>
+    setvar GRUB_THEME "\"$grub_dir/themes/$1/theme.txt\""
+    setvar GRUB_GFXMODE "\"1920x1080,auto\""
+    setvar GRUB_GFXPAYLOAD_LINUX keep
+    sed -i -E 's|^(GRUB_TERMINAL(_OUTPUT)?=.*console.*)|#\1|' /etc/default/grub
+  }
+  case $I_GRUBTHEME in
+    blackice)
+      say "Blackice GRUB téma telepítése GitHubról"
+      if curl -fsSL -o /tmp/repo.tar.gz "https://github.com/${I_GH_USER}/${I_GH_REPO}/archive/refs/heads/${I_GH_BRANCH}.tar.gz" \
+         && tar -xzf /tmp/repo.tar.gz -C /tmp; then
+        local extracted_dir="/tmp/${I_GH_REPO}-${I_GH_BRANCH}"
+        if [[ -f "$extracted_dir/blackice/theme.txt" ]]; then
+          rm -rf "$grub_dir/themes/blackice"
+          cp -r "$extracted_dir/blackice" "$grub_dir/themes/blackice"
+          grub_theme_on blackice
+        else
+          warn "A repóban nincs blackice/theme.txt, téma nélkül folytatom."
+        fi
+      else
+        warn "A GRUB téma letöltése nem sikerült, téma nélkül folytatom."
+      fi
+      rm -rf /tmp/repo.tar.gz "/tmp/${I_GH_REPO}-${I_GH_BRANCH}" 2>/dev/null || true
+      ;;
+    hyperfluent)
+      say "HyperFluent GRUB téma (Arch változat) telepítése"
+      rm -rf /tmp/hyperfluent
+      if git clone --depth 1 https://github.com/Coopydood/HyperFluent-GRUB-Theme.git /tmp/hyperfluent \
+         && [[ -f /tmp/hyperfluent/arch/theme.txt ]]; then
+        rm -rf "$grub_dir/themes/hyperfluent"
+        cp -r /tmp/hyperfluent/arch "$grub_dir/themes/hyperfluent"
+        grub_theme_on hyperfluent
+      else
+        warn "A HyperFluent téma letöltése nem sikerült, téma nélkül folytatom."
+      fi
+      rm -rf /tmp/hyperfluent
+      ;;
+    *) say "GRUB téma nélkül" ;;
+  esac
 
   say "GRUB telepítése (UEFI)"
   mkdir -p /run/udev
@@ -898,58 +975,298 @@ aur_build() {
   fi
 }
 
-xfce_user_setup() {
-  local pic_dir=$1 h="/home/$I_USER" rc
-  mkdir -p "$h/.config/autostart" "$h/.config/xfce4/xfconf/xfce-perchannel-xml" "$h/.local/bin"
+# ---------- segédfüggvények (a felhasználói beállításokhoz) ----------
 
-  # autostart <név> <stdin: .desktop tartalom> – meglévő fájlt nem írunk felül
-  autostart() { local f="$h/.config/autostart/$1.desktop"; if [[ -e $f ]]; then cat >/dev/null; else cat > "$f"; fi; }
-
-  if [[ $I_HOME_NEW == 1 && -f $pic_dir/menu.png ]]; then
-    # Whisker menü ikon (csak ha a profil már tartalmaz whiskermenu beállítást)
-    for rc in "$h"/.config/xfce4/panel/whiskermenu-*.rc; do
-      [[ -f $rc ]] && sed -i "s|^button-icon=.*|button-icon=$pic_dir/menu.png|" "$rc"
-    done
+# <xfce4-panel.xml> <ikon-útvonal>: a Whisker menü gomb ikonja (xfconf-ban van, nem rc-fájlban)
+set_whisker_icon() {
+  local x=$1 icon=$2 tmp
+  [[ -f $x ]] || return 0
+  tmp=$(mktemp)
+  if awk -v icon="$icon" '
+       /<property name="plugin-[0-9]+" type="string" value="whiskermenu"/ { inw=1; print; next }
+       inw && /<property name="plugin-[0-9]+"/ { inw=0 }
+       inw && /name="button-icon"/ { sub(/value="[^"]*"/, "value=\"" icon "\""); seen=1 }
+       { print }
+       END { exit seen ? 0 : 3 }' "$x" > "$tmp"; then
+    cat "$tmp" > "$x"
+  else
+    # nincs még button-icon: beszúrjuk (önzáró és gyerekes plugin-bejegyzés is lehet)
+    if grep -qE '<property name="plugin-[0-9]+" type="string" value="whiskermenu"/>' "$x"; then
+      sed -i -E 's|(<property name="plugin-[0-9]+" type="string" value="whiskermenu")/>|\1>\n      <property name="button-icon" type="string" value="'"$icon"'"/>\n    </property>|' "$x"
+    else
+      sed -i -E '/<property name="plugin-[0-9]+" type="string" value="whiskermenu">/a\      <property name="button-icon" type="string" value="'"$icon"'"/>' "$x"
+    fi
   fi
+  rm -f "$tmp"
+}
 
-  # Háttérkép: új home + profil nélkül, első bejelentkezéskor egyszer
-  # (chrootban nincs D-Bus, ezért xfconf-query itt nem használható)
-  if [[ $I_HOME_NEW == 1 && ${PROFILE_RESTORED:-0} != 1 && -f $pic_dir/Wallpaper.jpg ]]; then
-    cat > "$h/.local/bin/set-wallpaper-once" <<WPEOF
+# <xml> <csatorna> <szülő-property> <kulcs> <érték>: string típusú xfconf-beállítás fájlban
+set_xfconf_string() {
+  local x=$1 ch=$2 parent=$3 key=$4 val=$5
+  if [[ ! -f $x ]]; then
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n\n<channel name="%s" version="1.0">\n  <property name="%s" type="empty">\n    <property name="%s" type="string" value="%s"/>\n  </property>\n</channel>\n' \
+      "$ch" "$parent" "$key" "$val" > "$x"
+  elif grep -q "name=\"$key\" type=\"string\"" "$x"; then
+    sed -i -E "s#(name=\"$key\" type=\"string\" value=\")[^\"]*\"#\1$val\"#" "$x"
+  elif grep -q "<property name=\"$parent\" type=\"empty\">" "$x"; then
+    sed -i -E "/<property name=\"$parent\" type=\"empty\">/a\\    <property name=\"$key\" type=\"string\" value=\"$val\"/>" "$x"
+  else
+    sed -i "s#</channel>#  <property name=\"$parent\" type=\"empty\">\n    <property name=\"$key\" type=\"string\" value=\"$val\"/>\n  </property>\n</channel>#" "$x"
+  fi
+}
+
+# <xfce4-desktop.xml> <kép>: minden monitor / munkaterület háttere erre a képre
+set_wallpaper_xml() {
+  local x=$1 img=$2
+  [[ -f $x ]] || return 1
+  sed -i -E 's#(name="(last-image|image-path)" type="string" value=")[^"]*"#\1'"$img"'"#g' "$x"
+}
+
+# <thunar.xml>: a rejtett fájlok alapból ne látszódjanak
+thunar_hidden_off() {
+  local x=$1
+  [[ -f $x ]] || return 0
+  if grep -q 'name="last-show-hidden"' "$x"; then
+    sed -i -E 's#(name="last-show-hidden" type="bool" value=")true"#\1false"#' "$x"
+  else
+    sed -i 's#</channel>#  <property name="last-show-hidden" type="bool" value="false"/>\n</channel>#' "$x"
+  fi
+}
+
+# ini_set <fájl> <[szakasz]> <kulcs> <érték>
+ini_set() {
+  local f=$1 sec=$2 key=$3 val=$4 tmp
+  mkdir -p "$(dirname "$f")"; [[ -f $f ]] || : > "$f"
+  tmp=$(mktemp)
+  awk -v sec="$sec" -v key="$key" -v val="$val" '
+    BEGIN { insec=0; done=0 }
+    /^\[/ { if (insec && !done) { print key "=" val; done=1 } insec = ($0 == "[" sec "]"); print; next }
+    insec && index($0, key "=") == 1 { print key "=" val; done=1; next }
+    { print }
+    END { if (!done) { if (!insec) print "[" sec "]"; print key "=" val } }' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+# Profilkép: ~/.face (Whisker menü, Mugshot) + AccountsService (bejelentkező képernyő)
+set_avatar() {
+  local img=$1 h="/home/$I_USER"
+  [[ -f $img ]] || return 0
+  if [[ $I_HOME_NEW == 1 || ! -e $h/.face ]]; then
+    cp -f "$img" "$h/.face"
+    chown "$I_USER:$I_USER" "$h/.face"; chmod 644 "$h/.face"
+  fi
+  mkdir -p /var/lib/AccountsService/users /var/lib/AccountsService/icons
+  chmod 755 /var/lib/AccountsService /var/lib/AccountsService/icons; chmod 700 /var/lib/AccountsService/users
+  cp -f "$img" "/var/lib/AccountsService/icons/$I_USER"; chmod 644 "/var/lib/AccountsService/icons/$I_USER"
+  printf '[User]\nIcon=/var/lib/AccountsService/icons/%s\n' "$I_USER" > "/var/lib/AccountsService/users/$I_USER"
+  chmod 600 "/var/lib/AccountsService/users/$I_USER"
+}
+
+# Audacious Winamp-skin: a repó Skins/*.wsz fájljai -> ~/.local/share/audacious/Skins + [skins] skin=
+audacious_skin() {
+  local h="/home/$I_USER" src=/tmp/repo-src f skin="" cfg dir
+  local -a files=()
+  rm -rf "$src"; mkdir -p "$src"
+  if ! { curl -fsSL -o /tmp/repo-src.tar.gz "https://github.com/${I_GH_USER}/${I_GH_REPO}/archive/refs/heads/${I_GH_BRANCH}.tar.gz" \
+         && tar -xzf /tmp/repo-src.tar.gz -C "$src" --strip-components=1; }; then
+    warn "A repó letöltése nem sikerült, az Audacious skin kimarad."; rm -rf "$src" /tmp/repo-src.tar.gz; return 0
+  fi
+  shopt -s nullglob
+  files=("$src/Winamp Skins"/*.wsz "$src/Winamp Skins"/*.zip "$src"/Skins/*.wsz "$src"/Skins/*.zip)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    say "Nincs "Winamp Skins/*.wsz" a GitHub-repóban, az Audacious skin kimarad."
+    rm -rf "$src" /tmp/repo-src.tar.gz; return 0
+  fi
+  dir="$h/.local/share/audacious/Skins"
+  mkdir -p "$dir"
+  for f in "${files[@]}"; do cp -f "$f" "$dir/"; [[ ${f##*/} == "$I_AUD_SKIN" ]] && skin=${f##*/}; done
+  [[ -n $skin ]] || skin=${files[0]##*/}
+  cfg="$h/.config/audacious/config"
+  if [[ $I_HOME_NEW == 1 ]] || ! grep -q '^skin=' "$cfg" 2>/dev/null; then
+    ini_set "$cfg" skins skin "$dir/$skin"
+  fi
+  chown -R "$I_USER:$I_USER" "$h/.local/share/audacious" "$h/.config/audacious"
+  say "Audacious skin: $skin"
+  rm -rf "$src" /tmp/repo-src.tar.gz
+}
+
+# SolidCraft: GitHub release AppImage, SHA256 ellenőrzéssel
+install_solidcraft() {
+  local base=$I_SC_URL app=/opt/solidcraft/solidcraft.AppImage sums=/tmp/solidcraft.sums h
+  say "SolidCraft telepítése (AppImage)"
+  mkdir -p /opt/solidcraft
+  if ! curl -fsSL -o "$app" "$base/solidcraft-linux-x86_64.AppImage"; then
+    warn "A SolidCraft letöltése nem sikerült."; rm -f "$app"; return 0
+  fi
+  if curl -fsSL -o "$sums" "$base/SHA256SUMS.txt"; then
+    h=$(sha256sum "$app" | cut -d' ' -f1)
+    if ! grep -q "$h" "$sums"; then
+      warn "A SolidCraft ellenőrzőösszege NEM egyezik, nem telepítem."; rm -f "$app" "$sums"; return 0
+    fi
+  else
+    warn "Az ellenőrzőösszeg-fájl nem érhető el, ellenőrzés nélkül telepítem."
+  fi
+  rm -f "$sums"
+  chmod 755 "$app"
+  ln -sf "$app" /usr/local/bin/solidcraft
+  cat > /usr/share/applications/solidcraft.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=SolidCraft
+Comment=Parametrikus 3D CAD
+Exec=$app %F
+Icon=applications-engineering
+Terminal=false
+Categories=Graphics;Engineering;
+EOF
+}
+
+aur_build() {
+  local pkgs=() pkg
+  has aur      && pkgs+=(yay-bin google-chrome)
+  has rustdesk && pkgs+=(rustdesk-bin)
+  has glava    && pkgs+=(glava ksuperkey)
+  say "AUR csomagok: ${pkgs[*]}"
+  # Az ideiglenes építő felhasználó home-ja nem a /home alatt van (meglévő /home védelme)
+  useradd -m -d /var/tmp/builder -s /bin/bash builder
+  echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-builder
+  chmod 440 /etc/sudoers.d/99-builder
+
+  for pkg in "${pkgs[@]}"; do
+    say "AUR: $pkg"
+    runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "Nem sikerült: $pkg"
+  done
+  userdel -r builder 2>/dev/null
+  rm -f /etc/sudoers.d/99-builder
+
+  if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
+    systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
+  fi
+}
+
+xfce_user_setup() {
+  local pic_dir=$1 h="/home/$I_USER" rc xml="/home/$I_USER/.config/xfce4/xfconf/xfce-perchannel-xml"
+  mkdir -p "$h/.config/autostart" "$xml" "$h/.local/bin"
+
+  # autostart <név> <stdin: .desktop tartalom> – új home-nál felülírjuk (a profilból származó régit is),
+  # meglévő home-nál a felhasználó fájlját nem bántjuk
+  autostart() {
+    local f="$h/.config/autostart/$1.desktop"
+    if [[ -e $f && $I_HOME_NEW != 1 ]]; then cat >/dev/null; else cat > "$f"; fi
+  }
+
+  if [[ $I_HOME_NEW == 1 ]]; then
+    # Profil nélkül az alap panel "Alkalmazások" menüje helyett Whisker menü kerül a panelre
+    if [[ ! -f $xml/xfce4-panel.xml && -f /etc/xdg/xfce4/panel/default.xml ]]; then
+      sed 's/value="applicationsmenu"/value="whiskermenu"/' /etc/xdg/xfce4/panel/default.xml > "$xml/xfce4-panel.xml"
+    fi
+    # A Whisker menü gombjának ikonja: ~/Képek/menu.png (a panel-beállításban)
+    [[ -f $pic_dir/menu.png ]] && set_whisker_icon "$xml/xfce4-panel.xml" "$pic_dir/menu.png"
+    # Thunar: rejtett fájlok alapból rejtve
+    thunar_hidden_off "$xml/thunar.xml"
+
+    # Háttérkép: a profil (régi gépről származó) beállítását átírjuk, és első belépéskor
+    # még egyszer, a tényleges monitorokra is beállítjuk (a chrootban nincs D-Bus / xfconf).
+    if [[ -f $pic_dir/Wallpaper.jpg ]]; then
+      set_wallpaper_xml "$xml/xfce4-desktop.xml" "$pic_dir/Wallpaper.jpg" || true
+      cat > "$h/.local/bin/set-wallpaper-once" <<'WPEOF'
 #!/usr/bin/env bash
-sleep 6
-for p in \$(xfconf-query -c xfce4-desktop -l | grep last-image); do
-  xfconf-query -c xfce4-desktop -p "\$p" -s "$pic_dir/Wallpaper.jpg"
+img=$1
+mkdir -p "$HOME/.cache"; exec >>"$HOME/.cache/set-wallpaper.log" 2>&1
+for _ in $(seq 1 40); do pgrep -x xfdesktop >/dev/null && break; sleep 1; done
+sleep 4
+mapfile -t props < <(xfconf-query -c xfce4-desktop -l | grep '/last-image$')
+for m in $(xrandr --listmonitors 2>/dev/null | awk 'NR>1 {print $NF}'); do
+  props+=("/backdrop/screen0/monitor${m}/workspace0/last-image")
 done
-rm -f "\$HOME/.config/autostart/set-wallpaper-once.desktop"
+for p in "${props[@]}"; do
+  xfconf-query -c xfce4-desktop -p "$p" -n -t string -s "$img"
+  xfconf-query -c xfce4-desktop -p "${p%last-image}image-style" -n -t int -s 5
+done
+xfdesktop --reload 2>/dev/null
+rm -f "$HOME/.config/autostart/set-wallpaper-once.desktop"
 WPEOF
-    chmod +x "$h/.local/bin/set-wallpaper-once"
-    autostart set-wallpaper-once <<EOF
+      chmod +x "$h/.local/bin/set-wallpaper-once"
+      autostart set-wallpaper-once <<EOF
 [Desktop Entry]
 Type=Application
 Name=Háttérkép beállítása (egyszeri)
-Exec=$h/.local/bin/set-wallpaper-once
+Exec=$h/.local/bin/set-wallpaper-once "$pic_dir/Wallpaper.jpg"
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
 EOF
+    fi
   fi
 
-  if command -v glava >/dev/null 2>&1; then
+  # Sötét téma: GTK + ablakkeret + ikonok + Qt/Kvantum (új home-nál a profil régi beállítását is felülírja)
+  if [[ -n $GTK_THEME ]]; then
+    if [[ $I_HOME_NEW == 1 || ! -e $xml/xsettings.xml ]]; then
+      set_xfconf_string "$xml/xsettings.xml" xsettings Net ThemeName "$GTK_THEME"
+      set_xfconf_string "$xml/xsettings.xml" xsettings Net IconThemeName "$ICON_THEME"
+    fi
+    if [[ $I_HOME_NEW == 1 || ! -e $xml/xfwm4.xml ]]; then
+      set_xfconf_string "$xml/xfwm4.xml" xfwm4 general theme "$WM_THEME"
+    fi
+    mkdir -p "$h/.config/gtk-3.0" "$h/.config/gtk-4.0" "$h/.config/Kvantum"
+    if [[ $I_HOME_NEW == 1 || ! -e $h/.config/gtk-3.0/settings.ini ]]; then
+      printf '[Settings]\ngtk-theme-name=%s\ngtk-icon-theme-name=%s\ngtk-application-prefer-dark-theme=1\n' "$GTK_THEME" "$ICON_THEME" > "$h/.config/gtk-3.0/settings.ini"
+    fi
+    if [[ $I_HOME_NEW == 1 || ! -e $h/.config/gtk-4.0/settings.ini ]]; then
+      printf '[Settings]\ngtk-application-prefer-dark-theme=1\n' > "$h/.config/gtk-4.0/settings.ini"
+    fi
+    if [[ -n $KV_THEME && ( $I_HOME_NEW == 1 || ! -e $h/.config/Kvantum/kvantum.kvconfig ) ]]; then
+      printf '[General]\ntheme=%s\n' "$KV_THEME" > "$h/.config/Kvantum/kvantum.kvconfig"
+    fi
+    # KDE/KF6 programok (Okular) ikontémája
+    if [[ $I_HOME_NEW == 1 || ! -e $h/.config/kdeglobals ]]; then
+      printf '[Icons]\nTheme=%s\n' "$ICON_THEME" > "$h/.config/kdeglobals"
+    fi
+  fi
+
+  if has glava; then
     mkdir -p "$h/.config/glava"
     cp -rn /etc/xdg/glava/. "$h/.config/glava/" 2>/dev/null || true
+    cat > "$h/.local/bin/glava-start" <<'GLV'
+#!/usr/bin/env bash
+# GLava indító: az aktuális kijelző geometriáját beírja az rc.glsl-be, majd elindítja a vizualizálót.
+mkdir -p "$HOME/.cache" "$HOME/.config/glava"
+exec >>"$HOME/.cache/glava-autostart.log" 2>&1
+echo "=== $(date) ==="
+command -v glava >/dev/null || { echo "glava nincs telepítve"; exit 1; }
+[[ -f $HOME/.config/glava/rc.glsl ]] || cp -rn /etc/xdg/glava/. "$HOME/.config/glava/"
+for _ in $(seq 1 40); do pgrep -x xfdesktop >/dev/null && break; sleep 1; done
+sleep 5
+g=$(xrandr --listmonitors 2>/dev/null | awk '/\*/ {print $3; exit}')
+[[ -n $g ]] || g=$(xrandr --listmonitors 2>/dev/null | awk 'NR==2 {print $3}')
+if [[ $g =~ ^([0-9]+)/[0-9]+x([0-9]+)/[0-9]+\+(-?[0-9]+)\+(-?[0-9]+)$ ]]; then
+  rc="$HOME/.config/glava/rc.glsl"
+  sed -i '/#request setgeometry/d' "$rc"
+  printf '#request setgeometry %s %s %s %s\n' "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >> "$rc"
+  echo "geometria: ${BASH_REMATCH[3]} ${BASH_REMATCH[4]} ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+else
+  echo "a kijelző geometriája nem állapítható meg ('$g')"
+fi
+exec glava --desktop
+GLV
+    chmod +x "$h/.local/bin/glava-start"
     autostart glava <<EOF
 [Desktop Entry]
 Type=Application
-Exec=sh -c 'sleep 10 && glava --desktop'
-X-GNOME-Autostart-enabled=true
 Name=GLava
+Exec=$h/.local/bin/glava-start
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
 EOF
-  fi
-
-  if command -v ksuperkey >/dev/null 2>&1; then
-    autostart ksuperkey <<EOF
+    command -v ksuperkey >/dev/null 2>&1 && autostart ksuperkey <<EOF
 [Desktop Entry]
 Type=Application
 Name=KSuperKey
 Exec=ksuperkey
+Hidden=false
+NoDisplay=false
 X-GNOME-Autostart-enabled=true
 EOF
   fi
@@ -960,6 +1277,8 @@ EOF
 Type=Application
 Name=XScreenSaver
 Exec=xscreensaver -no-splash
+Hidden=false
+NoDisplay=false
 X-GNOME-Autostart-enabled=true
 EOF
     # Képernyővédő: GL Matrix, 10 perc után indul, a zárolás (jelszó) a képernyővédő indulása után 30 perccel
@@ -984,8 +1303,8 @@ programs:	\
 
 XSC
     fi
-    # XFCE energiakezelő: minden automatikus kikapcsolás / alvás / lemerülésig-sötétítés TILTVA
-    rc="$h/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml"
+    # XFCE energiakezelő: minden automatikus kikapcsolás / alvás TILTVA
+    rc="$xml/xfce4-power-manager.xml"
     if [[ $I_HOME_NEW == 1 || ! -e $rc ]]; then
       cat > "$rc" <<'PMXML'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1034,12 +1353,16 @@ phase2() {
     rm -f /tmp/xfce-backup.tar.gz
   fi
 
+  set_avatar "$pic_dir/Avatar.png"
+
   if has flatpak; then
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
   fi
 
   need_aur && aur_build
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
+  audacious_skin
+  has solidcraft && install_solidcraft
   fix_home_owner
 }
 
