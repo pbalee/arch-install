@@ -1,0 +1,218 @@
+[com/github/maoschanz/drawing]
+last-active-tool='rect_select'
+last-version='1.0.2'
+maximized=false
+
+[com/github/maoschanz/drawing/tools-options]
+last-active-shape='polygon'
+last-delete-replace='alpha'
+last-font-name='Sans'
+last-left-rgba=['0.8', '0.0', '0.0', '1.0']
+last-right-rgba=['1.0', '1.0', '0.0', '0.5']
+last-shape-filling='empty'
+last-size=5
+last-text-background='thin-outline'
+use-antialiasing=true
+
+[org/gnome/Console]
+last-window-fullscreen=false
+last-window-maximised=false
+last-window-size=(732, 528)
+
+[org/gnome/Showtime/State]
+is-maximized=false
+
+[org/gnome/control-center]
+last-panel='keyboard'
+window-state=(980, 640, false)
+
+[org/gnome/desktop/app-folders]
+folder-children=['System', 'Utilities', 'YaST', 'Pardus']
+
+[org/gnome/desktop/app-folders/folders/Pardus]
+categories=['X-Pardus-Apps']
+name='X-Pardus-Apps.directory'
+translate=true
+
+[org/gnome/desktop/app-folders/folders/System]
+apps=['nm-connection-editor.desktop', 'org.gnome.baobab.desktop', 'org.gnome.DiskUtility.desktop', 'org.gnome.Logs.desktop', 'org.freedesktop.MalcontentControl.desktop', 'org.gnome.SystemMonitor.desktop']
+name='X-GNOME-Shell-System.directory'
+translate=true
+
+[org/gnome/desktop/app-folders/folders/Utilities]
+apps=['org.gnome.Decibels.desktop', 'org.gnome.Connections.desktop', 'org.gnome.Papers.desktop', 'org.gnome.FileRoller.desktop', 'org.gnome.font-viewer.desktop', 'org.gnome.Loupe.desktop', 'org.gnome.Showtime.desktop']
+name='X-GNOME-Shell-Utilities.directory'
+translate=true
+
+[org/gnome/desktop/app-folders/folders/YaST]
+categories=['X-SuSE-YaST']
+name='suse-yast.directory'
+translate=true
+
+[org/gnome/desktop/input-sources]
+sources=[('xkb', 'hu')]
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+cursor-blink=true
+cursor-blink-time=1200
+cursor-size=24
+cursor-theme='elementary'
+font-name='Noto Sans 10'
+gtk-key-theme=''
+gtk-theme='Materia-dark'
+icon-theme='Papirus-Dark'
+
+[org/gnome/desktop/notifications]
+application-children=['firefox', 'org-gnome-nautilus', 'org-qbittorrent-qbittorrent', 'org-gnome-showtime']
+
+[org/gnome/desktop/notifications/application/firefox]
+application-id='firefox.desktop'
+
+[org/gnome/desktop/notifications/application/org-gnome-nautilus]
+application-id='org.gnome.Nautilus.desktop'
+
+[org/gnome/desktop/notifications/application/org-gnome-showtime]
+application-id='org.gnome.Showtime.desktop'
+
+[org/gnome/desktop/notifications/application/org-qbittorrent-qbittorrent]
+application-id='org.qbittorrent.qBittorrent.desktop'
+
+[org/gnome/desktop/peripherals/keyboard]
+numlock-state=true
+
+[org/gnome/desktop/peripherals/mouse]
+double-click=400
+drag-threshold=8
+
+[org/gnome/desktop/sound]
+event-sounds=false
+input-feedback-sounds=false
+theme-name='default'
+
+[org/gnome/desktop/wm/keybindings]
+show-desktop=['<Super>d']
+
+[org/gnome/desktop/wm/preferences]
+action-middle-click-titlebar='lower'
+button-layout='icon,menu:minimize,maximize,close'
+
+[org/gnome/epiphany/state]
+is-maximized=false
+window-size=(1024, 768)
+
+[org/gnome/file-roller/dialogs/new]
+default-extension='.zip'
+encrypt-header=false
+volume-size=104857
+
+[org/gnome/file-roller/listing]
+list-mode='as-folder'
+name-column-width=54
+show-path=false
+sort-method='name'
+sort-type='ascending'
+
+[org/gnome/file-roller/ui]
+sidebar-width=200
+window-height=480
+window-width=600
+
+[org/gnome/nautilus/preferences]
+migrated-gtk-settings=true
+
+[org/gnome/nautilus/window-state]
+initial-size=(1015, 705)
+initial-size-file-chooser=(890, 550)
+
+[org/gnome/nm-applet]
+disable-connected-notifications=true
+
+[org/gnome/portal/filechooser/firefox]
+last-folder-path='/home/pbalee/Dokumentumok'
+
+[org/gnome/settings-daemon/plugins/color]
+night-light-schedule-automatic=false
+
+[org/gnome/settings-daemon/plugins/media-keys]
+home=['<Super>e']
+
+[org/gnome/shell]
+app-picker-layout=[{'org.gnome.Contacts.desktop': <{'position': <0>}>, 'org.gnome.Weather.desktop': <{'position': <1>}>, 'org.gnome.clocks.desktop': <{'position': <2>}>, 'org.gnome.Maps.desktop': <{'position': <3>}>, 'thunar-settings.desktop': <{'position': <4>}>, 'org.gnome.Music.desktop': <{'position': <5>}>, 'org.gnome.SimpleScan.desktop': <{'position': <6>}>, 'org.gnome.Settings.desktop': <{'position': <7>}>, 'org.bluesabre.Mugshot.desktop': <{'position': <8>}>, 'org.gnome.Snapshot.desktop': <{'position': <9>}>, 'org.gnome.Characters.desktop': <{'position': <10>}>, 'Utilities': <{'position': <11>}>, 'System': <{'position': <12>}>, 'xfce4-appfinder.desktop': <{'position': <13>}>, 'org.gnome.Tour.desktop': <{'position': <14>}>, 'org.gnome.Yelp.desktop': <{'position': <15>}>, 'audacious.desktop': <{'position': <16>}>, 'brave-browser.desktop': <{'position': <17>}>, 'thunar-volman-settings.desktop': <{'position': <18>}>, 'thunar-bulk-rename.desktop': <{'position': <19>}>, 'dosbox.desktop': <{'position': <20>}>, 'xfce4-taskmanager.desktop': <{'position': <21>}>}, {'org.freecad.FreeCAD.desktop': <{'position': <0>}>, 'org.godotengine.Godot.desktop': <{'position': <1>}>, 'org.godotengine.Godot-mono.desktop': <{'position': <2>}>, 'google-chrome.desktop': <{'position': <3>}>, 'org.pulseaudio.pavucontrol.desktop': <{'position': <4>}>, 'lstopo.desktop': <{'position': <5>}>, 'htop.desktop': <{'position': <6>}>, 'org.kde.kdenlive.desktop': <{'position': <7>}>, 'org.keepassxc.KeePassXC.desktop': <{'position': <8>}>, 'xfce4-screenshooter.desktop': <{'position': <9>}>, 'kvantummanager.desktop': <{'position': <10>}>, 'libreoffice-startcenter.desktop': <{'position': <11>}>, 'libreoffice-base.desktop': <{'position': <12>}>, 'libreoffice-calc.desktop': <{'position': <13>}>, 'libreoffice-draw.desktop': <{'position': <14>}>, 'libreoffice-impress.desktop': <{'position': <15>}>, 'libreoffice-math.desktop': <{'position': <16>}>, 'libreoffice-writer.desktop': <{'position': <17>}>, 'losslesscut-bin.desktop': <{'position': <18>}>, 'net.lutris.Lutris.desktop': <{'position': <19>}>, 'micro.desktop': <{'position': <20>}>, 'nvidia-settings.desktop': <{'position': <21>}>, 'org.gnome.Calculator.desktop': <{'position': <22>}>}, {'com.obsproject.Studio.desktop': <{'position': <0>}>, 'org.kde.okular.desktop': <{'position': <1>}>, 'jconsole-java17-openjdk.desktop': <{'position': <2>}>, 'jshell-java17-openjdk.desktop': <{'position': <3>}>, 'virtualbox.desktop': <{'position': <4>}>, 'org.xfce.Parole.desktop': <{'position': <5>}>, 'net.davidotek.pupgui2.desktop': <{'position': <6>}>, 'org.qbittorrent.qBittorrent.desktop': <{'position': <7>}>, 'assistant.desktop': <{'position': <8>}>, 'qdbusviewer.desktop': <{'position': <9>}>, 'linguist.desktop': <{'position': <10>}>, 'qv4l2.desktop': <{'position': <11>}>, 'qvidcap.desktop': <{'position': <12>}>, 'designer.desktop': <{'position': <13>}>, 'com.github.maoschanz.drawing.desktop': <{'position': <14>}>, 'org.xfce.ristretto.desktop': <{'position': <15>}>, 'rustdesk.desktop': <{'position': <16>}>, 'screenkey.desktop': <{'position': <17>}>, 'org.shotcut.Shotcut.desktop': <{'position': <18>}>, 'org.vinegarhq.Sober.desktop': <{'position': <19>}>, 'solidcraft.desktop': <{'position': <20>}>, 'steam.desktop': <{'position': <21>}>, 'thunar.desktop': <{'position': <22>}>, 'xfce4-terminal.desktop': <{'position': <23>}>}, {'xscreensaver.desktop': <{'position': <0>}>, 'com.mattjakeman.ExtensionManager.desktop': <{'position': <1>}>, 'org.gnome.tweaks.desktop': <{'position': <2>}>, 'org.gnome.Epiphany.desktop': <{'position': <3>}>, 'org.gnome.Software.desktop': <{'position': <4>}>, 'org.gnome.TextEditor.desktop': <{'position': <5>}>}]
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'blur-my-shell@aunetx', 'compiz-windows-effect@hermes83.github.com', 'compiz-alike-magic-lamp-effect@hermes83.github.com']
+favorite-apps=['firefox.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Nautilus.desktop', 'galculator.desktop', 'org.xfce.mousepad.desktop', 'org.gnome.Console.desktop']
+welcome-dialog-last-shown-version='51.1'
+
+[org/gnome/shell/extensions/blur-my-shell]
+settings-version=8
+
+[org/gnome/shell/extensions/com/github/hermes83/compiz-windows-effect]
+last-version=33
+preset='R'
+
+[org/gnome/shell/extensions/dash-to-dock]
+background-opacity=0.80000000000000004
+custom-theme-shrink=true
+dash-max-icon-size=48
+dock-position='BOTTOM'
+height-fraction=0.90000000000000002
+preferred-monitor=-2
+preferred-monitor-by-connector='HDMI-1'
+show-apps-at-top=true
+show-mounts=false
+show-mounts-only-mounted=false
+show-trash=false
+
+[org/gnome/shell/world-clocks]
+locations=@av []
+
+[org/gnome/software]
+check-timestamp=int64 1793774030
+first-run=false
+flatpak-purge-timestamp=int64 1793781170
+
+[org/gtk/gtk4/settings/file-chooser]
+date-format='regular'
+location-mode='path-bar'
+show-hidden=false
+sidebar-width=140
+sort-column='name'
+sort-directories-first=false
+sort-order='ascending'
+type-format='category'
+view-type='list'
+window-size=(871, 326)
+
+[org/gtk/settings/color-chooser]
+custom-colors=[(0.80000000000000004, 0.0, 0.0, 1.0), (1.0, 1.0, 0.0, 0.5)]
+selected-color=(true, 0.80000000000000004, 0.0, 0.0, 1.0)
+
+[org/gtk/settings/file-chooser]
+date-format='regular'
+location-mode='path-bar'
+show-hidden=false
+show-size-column=true
+show-type-column=true
+sidebar-width=153
+sort-column='type'
+sort-directories-first=false
+sort-order='ascending'
+type-format='category'
+window-position=(56, 50)
+window-size=(1096, 822)
+
+[org/xfce/mousepad/preferences/view]
+word-wrap=true
+
+[org/xfce/mousepad/state/application]
+session=['1;;+']
+
+[org/xfce/mousepad/state/search]
+replace-all=true
+search-history=['\n']
+
+[org/xfce/mousepad/state/window]
+fullscreen=false
+height=uint32 441
+maximized=true
+width=uint32 1132
