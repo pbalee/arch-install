@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.9)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.11)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
@@ -566,7 +566,9 @@ build_package_list() {
                   thunar-media-tags-plugin thunar-volman file-roller mousepad ristretto galculator parole
                   lightdm lightdm-gtk-greeter numlockx network-manager-applet adwaita-icon-theme xdg-user-dirs
                   mugshot xorg-xrandr) ;;
-    gnome) PKGS+=(xorg-server gnome gdm xdg-user-dirs) ;;
+    gnome) PKGS+=(xorg-server gnome gdm gnome-browser-connector gnome-tweaks extension-manager dconf-editor xdg-user-dirs
+                  gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock gnome-shell-extension-blur-my-shell
+                  materia-gtk-theme papirus-icon-theme galculator mousepad) ;;
     kde)   PKGS+=(xorg-server plasma-meta sddm konsole dolphin kate ark xdg-user-dirs) ;;
     none)  PKGS+=(xdg-user-dirs) ;;
   esac
@@ -733,6 +735,9 @@ KEYMAP=$I_KEYMAP
 FONT=$I_FONT
 EOF
 
+  if [[ $I_GPU == nvidia ]] && ! grep -q 'nvidia_drm' /etc/mkinitcpio.conf; then
+    sed -i -E 's/^MODULES=\((.*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+  fi
   say "initramfs újragenerálása (billentyűzetkiosztás, betűtípus)"
   mkinitcpio -P || warn "mkinitcpio figyelmeztetés."
 
@@ -852,6 +857,8 @@ ARCHUPD
 EOF
   systemctl enable NetworkManager bluetooth fstrim.timer paccache.timer systemd-timesyncd reflector.timer
   has samba && systemctl enable smb nmb
+  # NVIDIA + Wayland: altatás/ébresztés szolgáltatások (nvidia-utils adja)
+  [[ $I_GPU == nvidia ]] && { systemctl enable nvidia-suspend nvidia-resume nvidia-hibernate 2>/dev/null || warn "nvidia-suspend szolgáltatások nem engedélyezhetők."; }
   
   case $I_DE in
     xfce)
@@ -873,7 +880,11 @@ EOF
         grep -q '^QT_STYLE_OVERRIDE=' /etc/environment 2>/dev/null || printf 'QT_STYLE_OVERRIDE=kvantum\nQT_QPA_PLATFORMTHEME=gtk3\n' >> /etc/environment
       fi
       ;;
-    gnome) systemctl enable gdm ;;
+    gnome)
+      systemctl enable gdm
+      # Wayland ne legyen letiltva (régi/kézi custom.conf felülírhatja)
+      [[ -f /etc/gdm/custom.conf ]] && sed -i 's/^WaylandEnable=false/#WaylandEnable=false/' /etc/gdm/custom.conf
+      ;;
     kde)   systemctl enable sddm ;;
   esac
 
@@ -952,197 +963,146 @@ EOF
   grep -q 'menuentry' "$grub_dir/grub.cfg" || { warn "A grub.cfg-ben nincs menüpont!"; return 1; }
 }
 
-aur_build() {
-  local pkgs=() pkg
-  has aur      && pkgs+=(yay-bin google-chrome)
-  has rustdesk && pkgs+=(rustdesk-bin)
-  has glava    && pkgs+=(glava ksuperkey)
-  say "AUR csomagok: ${pkgs[*]}"
+# aur_install <csomag...>: ideiglenes építő felhasználóval AUR-csomagok fordítása és telepítése
+aur_install() {
+  (( $# )) || return 0
+  local pkg
+  say "AUR csomagok: $*"
   # Az ideiglenes építő felhasználó home-ja nem a /home alatt van (meglévő /home védelme)
   useradd -m -d /var/tmp/builder -s /bin/bash builder
   echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-builder
   chmod 440 /etc/sudoers.d/99-builder
-
-  for pkg in "${pkgs[@]}"; do
+  for pkg in "$@"; do
     say "AUR: $pkg"
     runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "Nem sikerült: $pkg"
   done
   userdel -r builder 2>/dev/null
   rm -f /etc/sudoers.d/99-builder
+}
 
+aur_build() {
+  local pkgs=()
+  has aur      && pkgs+=(yay-bin google-chrome)
+  has rustdesk && pkgs+=(rustdesk-bin)
+  has glava    && pkgs+=(glava ksuperkey)
+  aur_install "${pkgs[@]}"
   if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
     systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
   fi
 }
 
-# ---------- segédfüggvények (a felhasználói beállításokhoz) ----------
-
-# <xfce4-panel.xml> <ikon-útvonal>: a Whisker menü gomb ikonja (xfconf-ban van, nem rc-fájlban)
-set_whisker_icon() {
-  local x=$1 icon=$2 tmp
-  [[ -f $x ]] || return 0
-  tmp=$(mktemp)
-  if awk -v icon="$icon" '
-       /<property name="plugin-[0-9]+" type="string" value="whiskermenu"/ { inw=1; print; next }
-       inw && /<property name="plugin-[0-9]+"/ { inw=0 }
-       inw && /name="button-icon"/ { sub(/value="[^"]*"/, "value=\"" icon "\""); seen=1 }
-       { print }
-       END { exit seen ? 0 : 3 }' "$x" > "$tmp"; then
-    cat "$tmp" > "$x"
+# git_ext <uuid> <git-url> [célmappa]: GNOME-bővítmény telepítése GitHubról (rendszerszinten)
+git_ext() {
+  local uuid=$1 url=$2 base=${3:-/usr/share/gnome-shell/extensions} tmp
+  local dest="$base/$uuid"
+  [[ -f $dest/metadata.json ]] && return 0
+  tmp=$(mktemp -d)
+  if git clone --depth 1 "$url" "$tmp/src" >/dev/null 2>&1 && grep -q "\"uuid\": *\"$uuid\"" "$tmp/src/metadata.json" 2>/dev/null; then
+    mkdir -p "$dest"
+    cp -r "$tmp/src/." "$dest/"
+    rm -rf "$dest/.git" "$dest/.github" "$dest/install.sh" "$dest/zip.sh" "$dest/README.md"
+    [[ -d $dest/schemas ]] && glib-compile-schemas "$dest/schemas"
+    chmod -R u=rwX,go=rX "$dest"
+    say "GNOME-bővítmény: $uuid"
   else
-    # nincs még button-icon: beszúrjuk (önzáró és gyerekes plugin-bejegyzés is lehet)
-    if grep -qE '<property name="plugin-[0-9]+" type="string" value="whiskermenu"/>' "$x"; then
-      sed -i -E 's|(<property name="plugin-[0-9]+" type="string" value="whiskermenu")/>|\1>\n      <property name="button-icon" type="string" value="'"$icon"'"/>\n    </property>|' "$x"
-    else
-      sed -i -E '/<property name="plugin-[0-9]+" type="string" value="whiskermenu">/a\      <property name="button-icon" type="string" value="'"$icon"'"/>' "$x"
-    fi
+    warn "A GNOME-bővítmény ($uuid) telepítése nem sikerült."
   fi
-  rm -f "$tmp"
+  rm -rf "$tmp"
 }
 
-# <xml> <csatorna> <szülő-property> <kulcs> <érték>: string típusú xfconf-beállítás fájlban
-set_xfconf_string() {
-  local x=$1 ch=$2 parent=$3 key=$4 val=$5
-  if [[ ! -f $x ]]; then
-    printf '<?xml version="1.0" encoding="UTF-8"?>\n\n<channel name="%s" version="1.0">\n  <property name="%s" type="empty">\n    <property name="%s" type="string" value="%s"/>\n  </property>\n</channel>\n' \
-      "$ch" "$parent" "$key" "$val" > "$x"
-  elif grep -q "name=\"$key\" type=\"string\"" "$x"; then
-    sed -i -E "s#(name=\"$key\" type=\"string\" value=\")[^\"]*\"#\1$val\"#" "$x"
-  elif grep -q "<property name=\"$parent\" type=\"empty\">" "$x"; then
-    sed -i -E "/<property name=\"$parent\" type=\"empty\">/a\\    <property name=\"$key\" type=\"string\" value=\"$val\"/>" "$x"
-  else
-    sed -i "s#</channel>#  <property name=\"$parent\" type=\"empty\">\n    <property name=\"$key\" type=\"string\" value=\"$val\"/>\n  </property>\n</channel>#" "$x"
-  fi
-}
+# GNOME: bővítmények, alapértelmezett beállítások (dconf), billentyűparancsok, GDM numlock
+gnome_setup() {
+  local ed=/usr/share/gnome-shell/extensions miss=()
 
-# <xfce4-desktop.xml> <kép>: minden monitor / munkaterület háttere erre a képre
-set_wallpaper_xml() {
-  local x=$1 img=$2
-  [[ -f $x ]] || return 1
-  sed -i -E 's#(name="(last-image|image-path)" type="string" value=")[^"]*"#\1'"$img"'"#g' "$x"
-}
+  say "GNOME-bővítmények"
+  # Compiz-bővítmények: GitHubról (a metadata szerint GNOME 51-ig támogatottak)
+  git_ext compiz-windows-effect@hermes83.github.com https://github.com/hermes83/compiz-windows-effect.git
+  git_ext compiz-alike-magic-lamp-effect@hermes83.github.com https://github.com/hermes83/compiz-alike-magic-lamp-effect.git
+  # A többi a pacstrap-pel jött; ami nem érhető el a hivatalos tárolóban, azt AUR-ból pótoljuk
+  [[ -d $ed/appindicatorsupport@rgcjonas.gmail.com ]] || miss+=(gnome-shell-extension-appindicator)
+  [[ -d $ed/dash-to-dock@micxgx.gmail.com ]]          || miss+=(gnome-shell-extension-dash-to-dock)
+  [[ -d $ed/blur-my-shell@aunetx ]]                   || miss+=(gnome-shell-extension-blur-my-shell)
+  aur_install "${miss[@]}"
 
-# <thunar.xml>: a rejtett fájlok alapból ne látszódjanak
-thunar_hidden_off() {
-  local x=$1
-  [[ -f $x ]] || return 0
-  if grep -q 'name="last-show-hidden"' "$x"; then
-    sed -i -E 's#(name="last-show-hidden" type="bool" value=")true"#\1false"#' "$x"
-  else
-    sed -i 's#</channel>#  <property name="last-show-hidden" type="bool" value="false"/>\n</channel>#' "$x"
-  fi
-}
+  say "GNOME alapbeállítások (dconf) és billentyűparancsok"
+  cat > /usr/local/bin/open-terminal <<'TERM'
+#!/usr/bin/env bash
+# Super+T: az első elérhető terminál
+for t in kgx gnome-terminal xfce4-terminal konsole xterm; do
+  command -v "$t" >/dev/null 2>&1 && exec "$t" "$@"
+done
+TERM
+  chmod +x /usr/local/bin/open-terminal
 
-# ini_set <fájl> <[szakasz]> <kulcs> <érték>
-ini_set() {
-  local f=$1 sec=$2 key=$3 val=$4 tmp
-  mkdir -p "$(dirname "$f")"; [[ -f $f ]] || : > "$f"
-  tmp=$(mktemp)
-  awk -v sec="$sec" -v key="$key" -v val="$val" '
-    BEGIN { insec=0; done=0 }
-    /^\[/ { if (insec && !done) { print key "=" val; done=1 } insec = ($0 == "[" sec "]"); print; next }
-    insec && index($0, key "=") == 1 { print key "=" val; done=1; next }
-    { print }
-    END { if (!done) { if (!insec) print "[" sec "]"; print key "=" val } }' "$f" > "$tmp" && cat "$tmp" > "$f"
-  rm -f "$tmp"
-}
+  mkdir -p /etc/dconf/profile /etc/dconf/db/local.d /etc/dconf/db/gdm.d
+  # Rendszerszintű ALAPÉRTÉKEK: a felhasználó saját módosításai (és egy megtartott /home beállításai) felülírják
+  printf 'user-db:user\nsystem-db:local\n' > /etc/dconf/profile/user
+  cat > /etc/dconf/db/local.d/00-bluelight <<'DCONF'
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Materia-dark'
+icon-theme='Papirus-Dark'
 
-# Profilkép: ~/.face (Whisker menü, Mugshot) + AccountsService (bejelentkező képernyő)
-set_avatar() {
-  local img=$1 h="/home/$I_USER"
-  [[ -f $img ]] || return 0
-  if [[ $I_HOME_NEW == 1 || ! -e $h/.face ]]; then
-    cp -f "$img" "$h/.face"
-    chown "$I_USER:$I_USER" "$h/.face"; chmod 644 "$h/.face"
-  fi
-  mkdir -p /var/lib/AccountsService/users /var/lib/AccountsService/icons
-  chmod 755 /var/lib/AccountsService /var/lib/AccountsService/icons; chmod 700 /var/lib/AccountsService/users
-  cp -f "$img" "/var/lib/AccountsService/icons/$I_USER"; chmod 644 "/var/lib/AccountsService/icons/$I_USER"
-  printf '[User]\nIcon=/var/lib/AccountsService/icons/%s\n' "$I_USER" > "/var/lib/AccountsService/users/$I_USER"
-  chmod 600 "/var/lib/AccountsService/users/$I_USER"
-}
+[org/gnome/desktop/input-sources]
+sources=[('xkb', 'hu')]
 
-# Audacious Winamp-skin: a repó Skins/*.wsz fájljai -> ~/.local/share/audacious/Skins + [skins] skin=
-audacious_skin() {
-  local h="/home/$I_USER" src=/tmp/repo-src f skin="" cfg dir
-  local -a files=()
-  rm -rf "$src"; mkdir -p "$src"
-  if ! { curl -fsSL -o /tmp/repo-src.tar.gz "https://github.com/${I_GH_USER}/${I_GH_REPO}/archive/refs/heads/${I_GH_BRANCH}.tar.gz" \
-         && tar -xzf /tmp/repo-src.tar.gz -C "$src" --strip-components=1; }; then
-    warn "A repó letöltése nem sikerült, az Audacious skin kimarad."; rm -rf "$src" /tmp/repo-src.tar.gz; return 0
-  fi
-  shopt -s nullglob
-  files=("$src/Winamp Skins"/*.wsz "$src/Winamp Skins"/*.zip "$src"/Skins/*.wsz "$src"/Skins/*.zip)
-  shopt -u nullglob
-  if (( ${#files[@]} == 0 )); then
-    say "Nincs "Winamp Skins/*.wsz" a GitHub-repóban, az Audacious skin kimarad."
-    rm -rf "$src" /tmp/repo-src.tar.gz; return 0
-  fi
-  dir="$h/.local/share/audacious/Skins"
-  mkdir -p "$dir"
-  for f in "${files[@]}"; do cp -f "$f" "$dir/"; [[ ${f##*/} == "$I_AUD_SKIN" ]] && skin=${f##*/}; done
-  [[ -n $skin ]] || skin=${files[0]##*/}
-  cfg="$h/.config/audacious/config"
-  if [[ $I_HOME_NEW == 1 ]] || ! grep -q '^skin=' "$cfg" 2>/dev/null; then
-    ini_set "$cfg" skins skin "$dir/$skin"
-  fi
-  chown -R "$I_USER:$I_USER" "$h/.local/share/audacious" "$h/.config/audacious"
-  say "Audacious skin: $skin"
-  rm -rf "$src" /tmp/repo-src.tar.gz
-}
+[org/gnome/desktop/peripherals/keyboard]
+numlock-state=true
+remember-numlock-state=true
 
-# SolidCraft: GitHub release AppImage, SHA256 ellenőrzéssel
-install_solidcraft() {
-  local base=$I_SC_URL app=/opt/solidcraft/solidcraft.AppImage sums=/tmp/solidcraft.sums h
-  say "SolidCraft telepítése (AppImage)"
-  mkdir -p /opt/solidcraft
-  if ! curl -fsSL -o "$app" "$base/solidcraft-linux-x86_64.AppImage"; then
-    warn "A SolidCraft letöltése nem sikerült."; rm -f "$app"; return 0
-  fi
-  if curl -fsSL -o "$sums" "$base/SHA256SUMS.txt"; then
-    h=$(sha256sum "$app" | cut -d' ' -f1)
-    if ! grep -q "$h" "$sums"; then
-      warn "A SolidCraft ellenőrzőösszege NEM egyezik, nem telepítem."; rm -f "$app" "$sums"; return 0
-    fi
-  else
-    warn "Az ellenőrzőösszeg-fájl nem érhető el, ellenőrzés nélkül telepítem."
-  fi
-  rm -f "$sums"
-  chmod 755 "$app"
-  ln -sf "$app" /usr/local/bin/solidcraft
-  cat > /usr/share/applications/solidcraft.desktop <<EOF
-[Desktop Entry]
-Type=Application
-Name=SolidCraft
-Comment=Parametrikus 3D CAD
-Exec=$app %F
-Icon=applications-engineering
-Terminal=false
-Categories=Graphics;Engineering;
+[org/gnome/desktop/sound]
+event-sounds=false
+
+[org/gnome/desktop/wm/preferences]
+resize-with-right-button=true
+action-middle-click-titlebar='lower'
+button-layout='icon,menu:minimize,maximize,close'
+
+[org/gnome/desktop/wm/keybindings]
+show-desktop=['<Super>d']
+
+[org/gnome/settings-daemon/plugins/media-keys]
+home=['<Super>e']
+custom-keybindings=['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']
+
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0]
+name='Terminál'
+command='open-terminal'
+binding='<Super>t'
+
+[org/gnome/nautilus/preferences]
+default-sort-order='type'
+
+[org/gnome/shell]
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'blur-my-shell@aunetx', 'compiz-windows-effect@hermes83.github.com', 'compiz-alike-magic-lamp-effect@hermes83.github.com']
+favorite-apps=['firefox.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Nautilus.desktop', 'galculator.desktop', 'org.xfce.mousepad.desktop', 'org.gnome.Console.desktop']
+
+[org/gnome/shell/extensions/dash-to-dock]
+dock-position='BOTTOM'
+dash-max-icon-size=48
+background-opacity=0.8
+custom-theme-shrink=true
+height-fraction=0.9
+show-apps-at-top=true
+show-mounts=false
+show-trash=false
+
+[org/gnome/shell/extensions/com/github/hermes83/compiz-windows-effect]
+preset='R'
+DCONF
+
+  # GDM bejelentkező képernyő: numlock alapból BE
+  cat > /etc/dconf/profile/gdm <<'EOF'
+user-db:user
+system-db:gdm
+file-db:/usr/share/gdm/greeter-dconf-defaults
 EOF
-}
-
-aur_build() {
-  local pkgs=() pkg
-  has aur      && pkgs+=(yay-bin google-chrome)
-  has rustdesk && pkgs+=(rustdesk-bin)
-  has glava    && pkgs+=(glava ksuperkey)
-  say "AUR csomagok: ${pkgs[*]}"
-  # Az ideiglenes építő felhasználó home-ja nem a /home alatt van (meglévő /home védelme)
-  useradd -m -d /var/tmp/builder -s /bin/bash builder
-  echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-builder
-  chmod 440 /etc/sudoers.d/99-builder
-
-  for pkg in "${pkgs[@]}"; do
-    say "AUR: $pkg"
-    runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "Nem sikerült: $pkg"
-  done
-  userdel -r builder 2>/dev/null
-  rm -f /etc/sudoers.d/99-builder
-
-  if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
-    systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
-  fi
+  cat > /etc/dconf/db/gdm.d/01-numlock <<'EOF'
+[org/gnome/desktop/peripherals/keyboard]
+numlock-state=true
+remember-numlock-state=true
+EOF
+  dconf update || warn "dconf update nem sikerült – a GNOME alapbeállítások nem lépnek életbe."
 }
 
 xfce_user_setup() {
@@ -1360,6 +1320,7 @@ phase2() {
   fi
 
   need_aur && aur_build
+  [[ $I_DE == gnome ]] && gnome_setup
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
   audacious_skin
   has solidcraft && install_solidcraft
