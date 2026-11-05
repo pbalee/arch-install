@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.11)
-#
+#  2026.10.05. - Csütörtök
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
