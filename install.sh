@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.11)
-#  2026.10.05. - Csütörtök
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.12)
+#
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
@@ -249,7 +249,7 @@ ask_software() {
   EXTRAS=$(d --separate-output --title "Extra csomagok és szolgáltatások" \
       --checklist "Szóköz = kijelölés, Enter = tovább" 0 0 0 \
       office      "LibreOffice (magyar nyelvi csomagokkal)"           on \
-      gaming      "Játék: Lutris, Wine, GameMode, MangoHud"           on \
+      gaming      "Játék: Steam, Lutris, Wine, GameMode, DOSBox, ProtonUp-Qt" on \
       vbox        "VirtualBox (host + dkms)"                          on \
       aur         "AUR: yay + Google Chrome"                          on \
       rustdesk    "RustDesk távoli asztal (AUR) + szolgáltatás"       on \
@@ -257,14 +257,18 @@ ask_software() {
       screensaver "XScreenSaver GL Matrix, energiagazd. KI (XFCE)" "$on_xfce" \
       flatpak     "Flatpak + Flathub"                                 on \
       samba       "Samba fájlmegosztás (WORKGROUP)"                   on \
-      media       "Média eszközök: yt-dlp, ffmpeg"                    on \
-      freecad     "FreeCAD (3D CAD)"                                  on \
+      media       "Média: yt-dlp, ffmpeg, GStreamer kodekek, Drawing"  on \
+      video       "Videó: Kdenlive, Shotcut, OBS, LosslessCut, Screenkey" on \
+      freecad     "CAD: FreeCAD + QCAD"                               on \
+      devtools    "Fejlesztés: Godot (+Mono), JDK 17, Android SDK + adb" on \
+      ollama      "Ollama (helyi AI; NVIDIA-nál CUDA – nagy letöltés)"  on \
+      brave       "Brave böngésző (AUR)"                              on \
       solidcraft  "SolidCraft CAD (GitHub release AppImage)"         on \
       profile     "XFCE profil visszatöltése GitHubról"               "$on_xfce" \
       drives      "Extra meghajtók fstab-ba (/Games, /Download)"      off) || cancel
 }
 has() { grep -qx "$1" <<<"$EXTRAS"; }
-need_aur() { has aur || has rustdesk || has glava; }
+need_aur() { has aur || has rustdesk || has glava || has brave || has video || has gaming || has devtools; }
 
 ask_disk() {
   MODE=$(menu "Lemezkezelés" "Hogyan állítsuk össze a partíciókat?" \
@@ -545,32 +549,46 @@ build_package_list() {
   grep -q GenuineIntel /proc/cpuinfo && ucode=intel-ucode
   grep -q AuthenticAMD /proc/cpuinfo && ucode=amd-ucode
 
+  # ---- KÖZÖS alap (minden asztali környezethez) ----
   PKGS=(base base-devel linux linux-firmware linux-headers $ucode terminus-font
         nano micro git sudo curl wget networkmanager
         grub efibootmgr os-prober dosfstools ntfs-3g exfatprogs e2fsprogs
         bash-completion man-db man-pages pacman-contrib reflector
         htop glances duf inxi lsb-release mc unzip unrar 7zip
-        udisks2 gvfs gvfs-afc gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb
+        udisks2 gvfs gvfs-afc gvfs-dnssd gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb gvfs-wsdd
         gnome-disk-utility bluez bluez-utils blueberry
         pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol
         noto-fonts noto-fonts-emoji ttf-dejavu ttf-liberation
-        firefox firefox-i18n-hu keepassxc qbittorrent audacious okular fastfetch accountsservice)
+        firefox firefox-i18n-hu keepassxc qbittorrent audacious okular fastfetch accountsservice
+        file-roller mousepad galculator adwaita-icon-theme xdg-user-dirs xorg-xrandr
+        hunspell-hu aspell-hu mythes-hu)
+  # Sötét téma + Qt/Kvantum (XFCE és GNOME alatt)
+  [[ $DE == xfce || $DE == gnome ]] && PKGS+=(materia-gtk-theme papirus-icon-theme kvantum kvantum-qt5 kvantum-theme-materia)
 
   [[ $ROOT_FS == btrfs || $HOME_FS == btrfs ]] && PKGS+=(btrfs-progs)
   [[ $ROOT_FS == xfs   || $HOME_FS == xfs   ]] && PKGS+=(xfsprogs)
 
+  # ---- ASZTALI KÖRNYEZET: itt vannak szétválasztva az XFCE-s és a GNOME-os csomagok ----
   case $DE in
-    xfce)  PKGS+=(xorg-server xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager
+    xfce)  PKGS+=(xorg-server
+                  xfce4-session xfce4-settings xfce4-panel xfce4-appfinder xfce4-power-manager
                   xfce4-taskmanager xfce4-terminal xfce4-notifyd xfce4-screenshooter xfce4-pulseaudio-plugin
-                  xfce4-whiskermenu-plugin xfconf xfdesktop xfwm4 thunar thunar-archive-plugin
-                  thunar-media-tags-plugin thunar-volman file-roller mousepad ristretto galculator parole
-                  lightdm lightdm-gtk-greeter numlockx network-manager-applet adwaita-icon-theme xdg-user-dirs
-                  mugshot xorg-xrandr) ;;
-    gnome) PKGS+=(xorg-server gnome gdm gnome-browser-connector gnome-tweaks extension-manager dconf-editor xdg-user-dirs
+                  xfce4-whiskermenu-plugin xfconf xfdesktop xfwm4
+                  thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman
+                  ristretto parole mugshot
+                  lightdm lightdm-gtk-greeter numlockx network-manager-applet) ;;
+    gnome) PKGS+=(xorg-server gnome gdm
+                  gnome-tweaks extension-manager dconf-editor gnome-browser-connector
                   gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock gnome-shell-extension-blur-my-shell
-                  materia-gtk-theme papirus-icon-theme galculator mousepad) ;;
-    kde)   PKGS+=(xorg-server plasma-meta sddm konsole dolphin kate ark xdg-user-dirs) ;;
-    none)  PKGS+=(xdg-user-dirs) ;;
+                  baobab decibels epiphany evolution loupe malcontent nautilus orca papers rygel
+                  showtime simple-scan snapshot sushi tecla yelp
+                  gnome-backgrounds gnome-calculator gnome-calendar gnome-characters gnome-clocks
+                  gnome-color-manager gnome-connections gnome-console gnome-contacts gnome-control-center
+                  gnome-font-viewer gnome-keyring gnome-logs gnome-maps gnome-menus gnome-music
+                  gnome-remote-desktop gnome-session gnome-settings-daemon gnome-shell gnome-software
+                  gnome-system-monitor gnome-text-editor gnome-tour gnome-user-docs gnome-user-share gnome-weather
+                  grilo-plugins gvfs-goa gvfs-onedrive xdg-desktop-portal-gnome xdg-user-dirs-gtk) ;;
+    kde)   PKGS+=(xorg-server plasma-meta sddm konsole dolphin kate ark) ;;
   esac
 
   case $GPU in
@@ -580,21 +598,25 @@ build_package_list() {
     other)  has gaming && PKGS+=(mesa lib32-mesa vulkan-swrast lib32-vulkan-swrast) ;;
   esac
 
-  has office  && PKGS+=(libreoffice-fresh libreoffice-fresh-hu hunspell-hu mythes-hu aspell-hu)
+  # ---- Választható csoportok ----
+  has office  && PKGS+=(libreoffice-fresh libreoffice-fresh-hu)
   has gaming  && PKGS+=(steam lutris gamemode lib32-gamemode gamescope mangohud wine wine-gecko wine-mono
-                        lib32-freetype2 lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader)
+                        lib32-freetype2 lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader dosbox)
   has vbox    && PKGS+=(virtualbox virtualbox-host-dkms)
-  has freecad && PKGS+=(freecad)
+  has freecad && PKGS+=(freecad qcad)
   has solidcraft && PKGS+=(fuse2 fuse3)
   has flatpak && PKGS+=(flatpak)
   has samba   && PKGS+=(samba)
-  has media   && PKGS+=(yt-dlp ffmpeg)
+  has media   && PKGS+=(yt-dlp ffmpeg gst-libav gst-plugins-bad gst-plugins-ugly gst-thumbnailers drawing)
+  has video   && PKGS+=(kdenlive shotcut obs-studio screenkey)
+  has devtools && PKGS+=(godot godot-mono jdk17-openjdk android-tools)
+  if has ollama; then
+    PKGS+=(ollama)
+    [[ $GPU == nvidia ]] && PKGS+=(ollama-cuda)
+  fi
   [[ $DE == xfce ]] && has screensaver && PKGS+=(xscreensaver)
-  if [[ $DE == xfce ]]; then
-    case $DARKTHEME in
-      arc)     PKGS+=(arc-gtk-theme papirus-icon-theme kvantum kvantum-qt5) ;;
-      materia) PKGS+=(materia-gtk-theme papirus-icon-theme kvantum kvantum-qt5 kvantum-theme-materia) ;;
-    esac
+  if [[ $DE == xfce && $DARKTHEME == arc ]]; then
+    PKGS+=(arc-gtk-theme)
   fi
 }
 
@@ -602,8 +624,11 @@ filter_packages() {
   declare -A HAVE=()
   local p
   while read -r p; do HAVE["$p"]=1; done < <(pacman -Slq; pacman -Sgq)
+  declare -A SEEN=()
   FINAL=(); SKIPPED=()
   for p in "${PKGS[@]}"; do
+    [[ -n ${SEEN[$p]:-} ]] && continue
+    SEEN["$p"]=1
     if [[ -n ${HAVE[$p]:-} ]]; then FINAL+=("$p"); else SKIPPED+=("$p"); fi
   done
   if (( ${#SKIPPED[@]} )); then
@@ -673,7 +698,7 @@ write_chroot_script() {
 set -u
 source /root/install.env
 has() { grep -qx "$1" <<<"$I_EXTRAS"; }
-need_aur() { has aur || has rustdesk || has glava; }
+need_aur() { has aur || has rustdesk || has glava || has brave || has video || has gaming || has devtools; }
 case ${I_DARK:-none} in
   arc)     GTK_THEME=Arc-Dark;      WM_THEME=Arc-Dark;      KV_THEME=KvArcDark ;;
   materia) GTK_THEME=Materia-dark;  WM_THEME=Materia-dark;  KV_THEME=MateriaDark ;;
@@ -985,6 +1010,12 @@ aur_build() {
   has aur      && pkgs+=(yay-bin google-chrome)
   has rustdesk && pkgs+=(rustdesk-bin)
   has glava    && pkgs+=(glava ksuperkey)
+  has brave    && pkgs+=(brave-bin)
+  has video    && pkgs+=(losslesscut-bin)
+  # ProtonUp-Qt: előbb a Python-függőségei (AUR), ez a sorrend számít
+  has gaming   && pkgs+=(python-inputs python-steam protonup-qt)
+  # Android SDK: az "android-sdk" az alap, a másik kettő ráépül
+  has devtools && pkgs+=(android-sdk android-sdk-platform-tools android-sdk-build-tools)
   aur_install "${pkgs[@]}"
   if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
     systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
@@ -1103,6 +1134,14 @@ numlock-state=true
 remember-numlock-state=true
 EOF
   dconf update || warn "dconf update nem sikerült – a GNOME alapbeállítások nem lépnek életbe."
+
+  # Qt-programok (KeePassXC, qBittorrent, Okular, Kdenlive...) sötét témája: Kvantum MateriaDark
+  local h="/home/$I_USER"
+  grep -q '^QT_STYLE_OVERRIDE=' /etc/environment 2>/dev/null || printf 'QT_STYLE_OVERRIDE=kvantum\nQT_QPA_PLATFORMTHEME=gtk3\n' >> /etc/environment
+  mkdir -p "$h/.config/Kvantum"
+  [[ $I_HOME_NEW == 1 || ! -e $h/.config/Kvantum/kvantum.kvconfig ]] && printf '[General]\ntheme=MateriaDark\n' > "$h/.config/Kvantum/kvantum.kvconfig"
+  [[ $I_HOME_NEW == 1 || ! -e $h/.config/kdeglobals ]] && printf '[Icons]\nTheme=Papirus-Dark\n' > "$h/.config/kdeglobals"
+  return 0
 }
 
 xfce_user_setup() {
