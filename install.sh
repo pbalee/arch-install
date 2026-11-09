@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.12)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.13)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
@@ -1041,14 +1041,136 @@ git_ext() {
   rm -rf "$tmp"
 }
 
+# build_ext <uuid> <git-url>: GNOME-bővítmény GitHubról, forrásból építve (make zip) és rendszerszinten telepítve
+build_ext() {
+  local uuid=$1 url=$2 dest=/usr/share/gnome-shell/extensions/$1 tmp z
+  [[ -f $dest/metadata.json ]] && return 0
+  pacman -S --needed --noconfirm make zip unzip gettext glib2-devel >/dev/null 2>&1 \
+    || pacman -S --needed --noconfirm make zip unzip gettext >/dev/null 2>&1
+  tmp=$(mktemp -d)
+  if git clone --depth 1 "$url" "$tmp/src" >/dev/null 2>&1 \
+     && (cd "$tmp/src" && make zip >/dev/null 2>&1) \
+     && z=$(ls "$tmp"/src/*.zip 2>/dev/null | head -n1) && [[ -n $z ]]; then
+    mkdir -p "$dest"
+    unzip -qo "$z" -d "$dest"
+    [[ -d $dest/schemas && ! -f $dest/schemas/gschemas.compiled ]] && glib-compile-schemas "$dest/schemas"
+    chmod -R u=rwX,go=rX "$dest"
+    say "GNOME-bővítmény (forrásból építve): $uuid"
+  else
+    warn "A GNOME-bővítmény ($uuid) építése nem sikerült."
+  fi
+  rm -rf "$tmp"
+}
+
+# set-max-refresh: a legnagyobb elérhető képfrissítés (pl. 144 Hz) az aktuális felbontáson
+install_max_refresh() {
+  cat > /usr/local/bin/set-max-refresh <<'PYEOF2'
+#!/usr/bin/env python3
+"""A monitorokat az aktuális felbontás legnagyobb elérhető frissítési frekvenciájára állítja.
+GNOME: Mutter DisplayConfig (D-Bus), egyszer, tartósan. Más környezet (X11): xrandr, minden belépéskor."""
+import os, re, subprocess, sys, time
+
+def plan(monitors):
+    """-> {connector: mode_id} csak ott, ahol van gyorsabb mód ugyanazon a felbontáson"""
+    out = {}
+    for spec, modes, _p in monitors:
+        cur = next((m for m in modes if m[6].get('is-current')), None)
+        if not cur:
+            continue
+        same = [m for m in modes if m[1] == cur[1] and m[2] == cur[2]]
+        best = max(same, key=lambda m: m[3])
+        if best[3] > cur[3] + 0.5:
+            out[spec[0]] = best[0]
+    return out
+
+def gnome():
+    from gi.repository import Gio, GLib
+    marker = os.path.expanduser('~/.cache/set-max-refresh.done')
+    if os.path.exists(marker):
+        return 0
+    proxy = None
+    for _ in range(30):
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            proxy = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None,
+                'org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
+                'org.gnome.Mutter.DisplayConfig', None)
+            serial, monitors, logicals, _props = proxy.call_sync(
+                'GetCurrentState', None, Gio.DBusCallFlags.NONE, -1, None).unpack()
+            if monitors:
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    else:
+        return 1
+    choice = plan(monitors)
+    if choice:
+        lms = [(lm[0], lm[1], lm[2], lm[3], lm[4],
+                [(m[0], choice.get(m[0], next((mo[0] for s, ms, _ in monitors if s[0] == m[0]
+                                                for mo in ms if mo[6].get('is-current')), '')), {})
+                 for m in lm[5]], {}) for lm in logicals]
+        arg = GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', (serial, 2, lms, {}))
+        proxy.call_sync('ApplyMonitorsConfig', arg, Gio.DBusCallFlags.NONE, -1, None)
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    open(marker, 'w').close()
+    return 0
+
+def xrandr():
+    txt = subprocess.run(['xrandr'], capture_output=True, text=True).stdout
+    out = None; block = {}
+    for line in txt.splitlines():
+        m = re.match(r'^(\S+) connected', line)
+        if m:
+            out = m.group(1); block[out] = []; continue
+        if out and re.match(r'^\s+\d+x\d+', line):
+            block[out].append(line.split())
+        elif line and not line[0].isspace():
+            out = None
+    for o, rows in block.items():
+        cur = None
+        for r in rows:
+            for tok in r[1:]:
+                if '*' in tok:
+                    cur = (r[0], float(re.sub(r'[^0-9.]', '', tok)))
+        if not cur:
+            continue
+        best = max(((float(re.sub(r'[^0-9.]', '', t)), r[0]) for r in rows if r[0] == cur[0] for t in r[1:]
+                    if re.sub(r'[^0-9.]', '', t)), default=None)
+        if best and best[0] > cur[1] + 0.5:
+            subprocess.run(['xrandr', '--output', o, '--mode', cur[0], '--rate', str(best[0])])
+    return 0
+
+if __name__ == '__main__':
+    try:
+        de = os.environ.get('XDG_CURRENT_DESKTOP', '')
+        sys.exit(gnome() if 'GNOME' in de else xrandr())
+    except Exception as e:
+        print('set-max-refresh:', e, file=sys.stderr)
+        sys.exit(0)
+PYEOF2
+  chmod +x /usr/local/bin/set-max-refresh
+  mkdir -p /etc/xdg/autostart
+  cat > /etc/xdg/autostart/set-max-refresh.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Legnagyobb képfrissítés
+Exec=/usr/local/bin/set-max-refresh
+OnlyShowIn=GNOME;XFCE;
+NoDisplay=true
+EOF
+}
+
 # GNOME: bővítmények, alapértelmezett beállítások (dconf), billentyűparancsok, GDM numlock
 gnome_setup() {
+  local pic_dir=${1:-/home/$I_USER/Képek}
   local ed=/usr/share/gnome-shell/extensions miss=()
 
   say "GNOME-bővítmények"
   # Compiz-bővítmények: GitHubról (a metadata szerint GNOME 51-ig támogatottak)
   git_ext compiz-windows-effect@hermes83.github.com https://github.com/hermes83/compiz-windows-effect.git
   git_ext compiz-alike-magic-lamp-effect@hermes83.github.com https://github.com/hermes83/compiz-alike-magic-lamp-effect.git
+  build_ext desktop-cube@schneegans.github.com https://github.com/Schneegans/Desktop-Cube.git
   # A többi a pacstrap-pel jött; ami nem érhető el a hivatalos tárolóban, azt AUR-ból pótoljuk
   [[ -d $ed/appindicatorsupport@rgcjonas.gmail.com ]] || miss+=(gnome-shell-extension-appindicator)
   [[ -d $ed/dash-to-dock@micxgx.gmail.com ]]          || miss+=(gnome-shell-extension-dash-to-dock)
@@ -1105,7 +1227,7 @@ binding='<Super>t'
 default-sort-order='type'
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'blur-my-shell@aunetx', 'compiz-windows-effect@hermes83.github.com', 'compiz-alike-magic-lamp-effect@hermes83.github.com']
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'blur-my-shell@aunetx', 'compiz-windows-effect@hermes83.github.com', 'compiz-alike-magic-lamp-effect@hermes83.github.com', 'desktop-cube@schneegans.github.com']
 favorite-apps=['firefox.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Nautilus.desktop', 'galculator.desktop', 'org.xfce.mousepad.desktop', 'org.gnome.Console.desktop']
 
 [org/gnome/shell/extensions/dash-to-dock]
@@ -1120,7 +1242,29 @@ show-trash=false
 
 [org/gnome/shell/extensions/com/github/hermes83/compiz-windows-effect]
 preset='R'
+
+[org/gnome/shell/extensions/desktop-cube]
+last-first-gap=false
+
+# Energiakezelés kikapcsolva: nincs kijelző-kikapcsolás, altatás, elhomályosítás
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+idle-dim=false
 DCONF
+  # Háttérkép (a letöltött Wallpaper.jpg; világos és sötét módhoz is)
+  if [[ -f $pic_dir/Wallpaper.jpg ]]; then
+    cat >> /etc/dconf/db/local.d/00-bluelight <<WPCONF
+
+[org/gnome/desktop/background]
+picture-options='zoom'
+picture-uri='file://$pic_dir/Wallpaper.jpg'
+picture-uri-dark='file://$pic_dir/Wallpaper.jpg'
+WPCONF
+  fi
 
   # GDM bejelentkező képernyő: numlock alapból BE
   cat > /etc/dconf/profile/gdm <<'EOF'
@@ -1132,7 +1276,13 @@ EOF
 [org/gnome/desktop/peripherals/keyboard]
 numlock-state=true
 remember-numlock-state=true
+
+# A bejelentkező képernyő se altasson
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
 EOF
+  install_max_refresh
   dconf update || warn "dconf update nem sikerült – a GNOME alapbeállítások nem lépnek életbe."
 
   # Qt-programok (KeePassXC, qBittorrent, Okular, Kdenlive...) sötét témája: Kvantum MateriaDark
@@ -1142,6 +1292,152 @@ EOF
   [[ $I_HOME_NEW == 1 || ! -e $h/.config/Kvantum/kvantum.kvconfig ]] && printf '[General]\ntheme=MateriaDark\n' > "$h/.config/Kvantum/kvantum.kvconfig"
   [[ $I_HOME_NEW == 1 || ! -e $h/.config/kdeglobals ]] && printf '[Icons]\nTheme=Papirus-Dark\n' > "$h/.config/kdeglobals"
   return 0
+}
+
+
+# <xfce4-panel.xml> <ikon-útvonal>: a Whisker menü gomb ikonja (xfconf-ban van, nem rc-fájlban)
+set_whisker_icon() {
+  local x=$1 icon=$2 tmp
+  [[ -f $x ]] || return 0
+  tmp=$(mktemp)
+  if awk -v icon="$icon" '
+       /<property name="plugin-[0-9]+" type="string" value="whiskermenu"/ { inw=1; print; next }
+       inw && /<property name="plugin-[0-9]+"/ { inw=0 }
+       inw && /name="button-icon"/ { sub(/value="[^"]*"/, "value=\"" icon "\""); seen=1 }
+       { print }
+       END { exit seen ? 0 : 3 }' "$x" > "$tmp"; then
+    cat "$tmp" > "$x"
+  else
+    # nincs még button-icon: beszúrjuk (önzáró és gyerekes plugin-bejegyzés is lehet)
+    if grep -qE '<property name="plugin-[0-9]+" type="string" value="whiskermenu"/>' "$x"; then
+      sed -i -E 's|(<property name="plugin-[0-9]+" type="string" value="whiskermenu")/>|\1>\n      <property name="button-icon" type="string" value="'"$icon"'"/>\n    </property>|' "$x"
+    else
+      sed -i -E '/<property name="plugin-[0-9]+" type="string" value="whiskermenu">/a\      <property name="button-icon" type="string" value="'"$icon"'"/>' "$x"
+    fi
+  fi
+  rm -f "$tmp"
+}
+
+# <xml> <csatorna> <szülő-property> <kulcs> <érték>: string típusú xfconf-beállítás fájlban
+set_xfconf_string() {
+  local x=$1 ch=$2 parent=$3 key=$4 val=$5
+  if [[ ! -f $x ]]; then
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n\n<channel name="%s" version="1.0">\n  <property name="%s" type="empty">\n    <property name="%s" type="string" value="%s"/>\n  </property>\n</channel>\n' \
+      "$ch" "$parent" "$key" "$val" > "$x"
+  elif grep -q "name=\"$key\" type=\"string\"" "$x"; then
+    sed -i -E "s#(name=\"$key\" type=\"string\" value=\")[^\"]*\"#\1$val\"#" "$x"
+  elif grep -q "<property name=\"$parent\" type=\"empty\">" "$x"; then
+    sed -i -E "/<property name=\"$parent\" type=\"empty\">/a\\    <property name=\"$key\" type=\"string\" value=\"$val\"/>" "$x"
+  else
+    sed -i "s#</channel>#  <property name=\"$parent\" type=\"empty\">\n    <property name=\"$key\" type=\"string\" value=\"$val\"/>\n  </property>\n</channel>#" "$x"
+  fi
+}
+
+# <xfce4-desktop.xml> <kép>: minden monitor / munkaterület háttere erre a képre
+set_wallpaper_xml() {
+  local x=$1 img=$2
+  [[ -f $x ]] || return 1
+  sed -i -E 's#(name="(last-image|image-path)" type="string" value=")[^"]*"#\1'"$img"'"#g' "$x"
+}
+
+# <thunar.xml>: a rejtett fájlok alapból ne látszódjanak
+thunar_hidden_off() {
+  local x=$1
+  [[ -f $x ]] || return 0
+  if grep -q 'name="last-show-hidden"' "$x"; then
+    sed -i -E 's#(name="last-show-hidden" type="bool" value=")true"#\1false"#' "$x"
+  else
+    sed -i 's#</channel>#  <property name="last-show-hidden" type="bool" value="false"/>\n</channel>#' "$x"
+  fi
+}
+
+# ini_set <fájl> <[szakasz]> <kulcs> <érték>
+ini_set() {
+  local f=$1 sec=$2 key=$3 val=$4 tmp
+  mkdir -p "$(dirname "$f")"; [[ -f $f ]] || : > "$f"
+  tmp=$(mktemp)
+  awk -v sec="$sec" -v key="$key" -v val="$val" '
+    BEGIN { insec=0; done=0 }
+    /^\[/ { if (insec && !done) { print key "=" val; done=1 } insec = ($0 == "[" sec "]"); print; next }
+    insec && index($0, key "=") == 1 { print key "=" val; done=1; next }
+    { print }
+    END { if (!done) { if (!insec) print "[" sec "]"; print key "=" val } }' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+# Profilkép: ~/.face (Whisker menü, Mugshot) + AccountsService (bejelentkező képernyő)
+set_avatar() {
+  local img=$1 h="/home/$I_USER"
+  [[ -f $img ]] || return 0
+  if [[ $I_HOME_NEW == 1 || ! -e $h/.face ]]; then
+    cp -f "$img" "$h/.face"
+    chown "$I_USER:$I_USER" "$h/.face"; chmod 644 "$h/.face"
+  fi
+  mkdir -p /var/lib/AccountsService/users /var/lib/AccountsService/icons
+  chmod 755 /var/lib/AccountsService /var/lib/AccountsService/icons; chmod 700 /var/lib/AccountsService/users
+  cp -f "$img" "/var/lib/AccountsService/icons/$I_USER"; chmod 644 "/var/lib/AccountsService/icons/$I_USER"
+  printf '[User]\nIcon=/var/lib/AccountsService/icons/%s\n' "$I_USER" > "/var/lib/AccountsService/users/$I_USER"
+  chmod 600 "/var/lib/AccountsService/users/$I_USER"
+}
+
+# Audacious Winamp-skin: a repó Skins/*.wsz fájljai -> ~/.local/share/audacious/Skins + [skins] skin=
+audacious_skin() {
+  local h="/home/$I_USER" src=/tmp/repo-src f skin="" cfg dir
+  local -a files=()
+  rm -rf "$src"; mkdir -p "$src"
+  if ! { curl -fsSL -o /tmp/repo-src.tar.gz "https://github.com/${I_GH_USER}/${I_GH_REPO}/archive/refs/heads/${I_GH_BRANCH}.tar.gz" \
+         && tar -xzf /tmp/repo-src.tar.gz -C "$src" --strip-components=1; }; then
+    warn "A repó letöltése nem sikerült, az Audacious skin kimarad."; rm -rf "$src" /tmp/repo-src.tar.gz; return 0
+  fi
+  shopt -s nullglob
+  files=("$src/Winamp Skins"/*.wsz "$src/Winamp Skins"/*.zip "$src"/Skins/*.wsz "$src"/Skins/*.zip)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    say "Nincs "Winamp Skins/*.wsz" a GitHub-repóban, az Audacious skin kimarad."
+    rm -rf "$src" /tmp/repo-src.tar.gz; return 0
+  fi
+  dir="$h/.local/share/audacious/Skins"
+  mkdir -p "$dir"
+  for f in "${files[@]}"; do cp -f "$f" "$dir/"; [[ ${f##*/} == "$I_AUD_SKIN" ]] && skin=${f##*/}; done
+  [[ -n $skin ]] || skin=${files[0]##*/}
+  cfg="$h/.config/audacious/config"
+  if [[ $I_HOME_NEW == 1 ]] || ! grep -q '^skin=' "$cfg" 2>/dev/null; then
+    ini_set "$cfg" skins skin "$dir/$skin"
+  fi
+  chown -R "$I_USER:$I_USER" "$h/.local/share/audacious" "$h/.config/audacious"
+  say "Audacious skin: $skin"
+  rm -rf "$src" /tmp/repo-src.tar.gz
+}
+
+# SolidCraft: GitHub release AppImage, SHA256 ellenőrzéssel
+install_solidcraft() {
+  local base=$I_SC_URL app=/opt/solidcraft/solidcraft.AppImage sums=/tmp/solidcraft.sums h
+  say "SolidCraft telepítése (AppImage)"
+  mkdir -p /opt/solidcraft
+  if ! curl -fsSL -o "$app" "$base/solidcraft-linux-x86_64.AppImage"; then
+    warn "A SolidCraft letöltése nem sikerült."; rm -f "$app"; return 0
+  fi
+  if curl -fsSL -o "$sums" "$base/SHA256SUMS.txt"; then
+    h=$(sha256sum "$app" | cut -d' ' -f1)
+    if ! grep -q "$h" "$sums"; then
+      warn "A SolidCraft ellenőrzőösszege NEM egyezik, nem telepítem."; rm -f "$app" "$sums"; return 0
+    fi
+  else
+    warn "Az ellenőrzőösszeg-fájl nem érhető el, ellenőrzés nélkül telepítem."
+  fi
+  rm -f "$sums"
+  chmod 755 "$app"
+  ln -sf "$app" /usr/local/bin/solidcraft
+  cat > /usr/share/applications/solidcraft.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=SolidCraft
+Comment=Parametrikus 3D CAD
+Exec=$app %F
+Icon=applications-engineering
+Terminal=false
+Categories=Graphics;Engineering;
+EOF
 }
 
 xfce_user_setup() {
@@ -1359,7 +1655,7 @@ phase2() {
   fi
 
   need_aur && aur_build
-  [[ $I_DE == gnome ]] && gnome_setup
+  [[ $I_DE == gnome ]] && gnome_setup "$pic_dir"
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
   audacious_skin
   has solidcraft && install_solidcraft
