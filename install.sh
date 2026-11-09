@@ -253,7 +253,7 @@ ask_software() {
       vbox        "VirtualBox (host + dkms)"                          on \
       aur         "AUR: yay + Google Chrome"                          on \
       rustdesk    "RustDesk távoli asztal (AUR) + szolgáltatás"       on \
-      glava       "GLava hangvizualizáló + ksuperkey (AUR, XFCE)"     "$on_xfce" \
+      glava       "GLava hangvizualizáló (AUR; XFCE-nél + ksuperkey)"  on \
       screensaver "XScreenSaver GL Matrix, energiagazd. KI (XFCE)" "$on_xfce" \
       flatpak     "Flatpak + Flathub"                                 on \
       samba       "Samba fájlmegosztás (WORKGROUP)"                   on \
@@ -266,6 +266,10 @@ ask_software() {
       solidcraft  "SolidCraft CAD (GitHub release AppImage)"         on \
       profile     "XFCE profil visszatöltése GitHubról"               "$on_xfce" \
       drives      "Extra meghajtók fstab-ba (/Games, /Download)"      off) || cancel
+  # XFCE-specifikus tételek: más asztali környezetnél nem települnek (XScreenSaver, XFCE-profil)
+  if [[ $DE != xfce ]]; then
+    EXTRAS=$(grep -vxE 'screensaver|profile' <<<"$EXTRAS")
+  fi
 }
 has() { grep -qx "$1" <<<"$EXTRAS"; }
 need_aur() { has aur || has rustdesk || has glava || has brave || has video || has gaming || has devtools; }
@@ -1009,7 +1013,8 @@ aur_build() {
   local pkgs=()
   has aur      && pkgs+=(yay-bin google-chrome)
   has rustdesk && pkgs+=(rustdesk-bin)
-  has glava    && pkgs+=(glava ksuperkey)
+  has glava    && pkgs+=(glava)
+  has glava && [[ $I_DE == xfce ]] && pkgs+=(ksuperkey)
   has brave    && pkgs+=(brave-bin)
   has video    && pkgs+=(losslesscut-bin)
   # ProtonUp-Qt: előbb a Python-függőségei (AUR), ez a sorrend számít
@@ -1440,6 +1445,61 @@ Categories=Graphics;Engineering;
 EOF
 }
 
+# GLava (hangvizualizáló): minden asztali környezetben; a ksuperkey csak XFCE-hez kell
+glava_setup() {
+  local h="/home/$I_USER"
+  has glava || return 0
+  mkdir -p "$h/.config/autostart" "$h/.local/bin"
+  autostart() {
+    local f="$h/.config/autostart/$1.desktop"
+    if [[ -e $f && $I_HOME_NEW != 1 ]]; then cat >/dev/null; else cat > "$f"; fi
+  }
+  mkdir -p "$h/.config/glava"
+  cp -rn /etc/xdg/glava/. "$h/.config/glava/" 2>/dev/null || true
+  cat > "$h/.local/bin/glava-start" <<'GLV'
+#!/usr/bin/env bash
+# GLava indító: az aktuális kijelző geometriáját beírja az rc.glsl-be, majd elindítja a vizualizálót.
+mkdir -p "$HOME/.cache" "$HOME/.config/glava"
+exec >>"$HOME/.cache/glava-autostart.log" 2>&1
+echo "=== $(date) ==="
+command -v glava >/dev/null || { echo "glava nincs telepítve"; exit 1; }
+[[ -f $HOME/.config/glava/rc.glsl ]] || cp -rn /etc/xdg/glava/. "$HOME/.config/glava/"
+for _ in $(seq 1 40); do pgrep -x xfdesktop >/dev/null || pgrep -x gnome-shell >/dev/null || pgrep -x plasmashell >/dev/null; [[ $? -eq 0 ]] && break; sleep 1; done
+sleep 5
+g=$(xrandr --listmonitors 2>/dev/null | awk '/\*/ {print $3; exit}')
+[[ -n $g ]] || g=$(xrandr --listmonitors 2>/dev/null | awk 'NR==2 {print $3}')
+if [[ $g =~ ^([0-9]+)/[0-9]+x([0-9]+)/[0-9]+\+(-?[0-9]+)\+(-?[0-9]+)$ ]]; then
+rc="$HOME/.config/glava/rc.glsl"
+sed -i '/#request setgeometry/d' "$rc"
+printf '#request setgeometry %s %s %s %s\n' "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >> "$rc"
+echo "geometria: ${BASH_REMATCH[3]} ${BASH_REMATCH[4]} ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+else
+echo "a kijelző geometriája nem állapítható meg ('$g')"
+fi
+exec glava --desktop
+GLV
+  chmod +x "$h/.local/bin/glava-start"
+  autostart glava <<EOF
+[Desktop Entry]
+Type=Application
+Name=GLava
+Exec=$h/.local/bin/glava-start
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+EOF
+  [[ $I_DE == xfce ]] && command -v ksuperkey >/dev/null 2>&1 && autostart ksuperkey <<EOF
+[Desktop Entry]
+Type=Application
+Name=KSuperKey
+Exec=ksuperkey
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+EOF
+  return 0
+}
+
 xfce_user_setup() {
   local pic_dir=$1 h="/home/$I_USER" rc xml="/home/$I_USER/.config/xfce4/xfconf/xfce-perchannel-xml"
   mkdir -p "$h/.config/autostart" "$xml" "$h/.local/bin"
@@ -1518,52 +1578,6 @@ EOF
     if [[ $I_HOME_NEW == 1 || ! -e $h/.config/kdeglobals ]]; then
       printf '[Icons]\nTheme=%s\n' "$ICON_THEME" > "$h/.config/kdeglobals"
     fi
-  fi
-
-  if has glava; then
-    mkdir -p "$h/.config/glava"
-    cp -rn /etc/xdg/glava/. "$h/.config/glava/" 2>/dev/null || true
-    cat > "$h/.local/bin/glava-start" <<'GLV'
-#!/usr/bin/env bash
-# GLava indító: az aktuális kijelző geometriáját beírja az rc.glsl-be, majd elindítja a vizualizálót.
-mkdir -p "$HOME/.cache" "$HOME/.config/glava"
-exec >>"$HOME/.cache/glava-autostart.log" 2>&1
-echo "=== $(date) ==="
-command -v glava >/dev/null || { echo "glava nincs telepítve"; exit 1; }
-[[ -f $HOME/.config/glava/rc.glsl ]] || cp -rn /etc/xdg/glava/. "$HOME/.config/glava/"
-for _ in $(seq 1 40); do pgrep -x xfdesktop >/dev/null && break; sleep 1; done
-sleep 5
-g=$(xrandr --listmonitors 2>/dev/null | awk '/\*/ {print $3; exit}')
-[[ -n $g ]] || g=$(xrandr --listmonitors 2>/dev/null | awk 'NR==2 {print $3}')
-if [[ $g =~ ^([0-9]+)/[0-9]+x([0-9]+)/[0-9]+\+(-?[0-9]+)\+(-?[0-9]+)$ ]]; then
-  rc="$HOME/.config/glava/rc.glsl"
-  sed -i '/#request setgeometry/d' "$rc"
-  printf '#request setgeometry %s %s %s %s\n' "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >> "$rc"
-  echo "geometria: ${BASH_REMATCH[3]} ${BASH_REMATCH[4]} ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
-else
-  echo "a kijelző geometriája nem állapítható meg ('$g')"
-fi
-exec glava --desktop
-GLV
-    chmod +x "$h/.local/bin/glava-start"
-    autostart glava <<EOF
-[Desktop Entry]
-Type=Application
-Name=GLava
-Exec=$h/.local/bin/glava-start
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-EOF
-    command -v ksuperkey >/dev/null 2>&1 && autostart ksuperkey <<EOF
-[Desktop Entry]
-Type=Application
-Name=KSuperKey
-Exec=ksuperkey
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-EOF
   fi
 
   if has screensaver && command -v xscreensaver >/dev/null 2>&1; then
@@ -1657,6 +1671,7 @@ phase2() {
   need_aur && aur_build
   [[ $I_DE == gnome ]] && gnome_setup "$pic_dir"
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
+  [[ $I_DE != none ]] && glava_setup
   audacious_skin
   has solidcraft && install_solidcraft
   fix_home_owner
