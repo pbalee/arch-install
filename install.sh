@@ -1003,6 +1003,9 @@ aur_install() {
   useradd -m -d /var/tmp/builder -s /bin/bash builder
   echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-builder
   chmod 440 /etc/sudoers.d/99-builder
+  # Nincs -debug csomag és forrásmásolás a hibakereséshez (felesleges, és nagy csomagoknál percekig tart)
+  printf 'OPTIONS=("${OPTIONS[@]/#debug/!debug}")\n' > /var/tmp/builder/.makepkg.conf
+  chown builder:builder /var/tmp/builder/.makepkg.conf
   for pkg in "$@"; do
     say "AUR: $pkg"
     runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "Nem sikerült: $pkg"
@@ -1024,7 +1027,7 @@ aur_build() {
   # Android SDK: az "android-sdk" az alap, a másik kettő ráépül
   has devtools && pkgs+=(android-sdk android-sdk-platform-tools android-sdk-build-tools android-sdk-cmdline-tools-latest)
   # GNOME: Rewaita (téma-színezés) + modern ikontéma
-  [[ $I_DE == gnome ]] && pkgs+=(rewaita tela-icon-theme)
+  [[ $I_DE == gnome ]] && pkgs+=(rewaita)
   aur_install "${pkgs[@]}"
   # ProtonUp-Qt tartalék: ha az AUR-ból nem sikerült, Flatpak-ból
   if has gaming && ! pacman -Q protonup-qt >/dev/null 2>&1 && command -v flatpak >/dev/null 2>&1; then
@@ -1034,6 +1037,20 @@ aur_build() {
   if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
     systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
   fi
+}
+
+# Tela ikontéma (modern): csak a standard színváltozat, közvetlenül GitHubról (az AUR-csomag mind a 15 színt építi, nagyon lassú)
+install_tela() {
+  local tmp; tmp=$(mktemp -d)
+  [[ -d /usr/share/icons/Tela-dark ]] && return 0
+  say "Tela ikontéma"
+  if git clone --depth 1 https://github.com/vinceliuice/Tela-icon-theme.git "$tmp/t" >/dev/null 2>&1 \
+     && (cd "$tmp/t" && ./install.sh -d /usr/share/icons standard >/dev/null 2>&1); then
+    gtk-update-icon-cache -f /usr/share/icons/Tela-dark >/dev/null 2>&1 || true
+  else
+    warn "A Tela ikontéma telepítése nem sikerült, marad a Papirus."
+  fi
+  rm -rf "$tmp"
 }
 
 # Godot Android-exporthoz: SDK-csomagok (platform, build-tools, NDK, CMake), licencek, debug keystore, szerkesztő-beállítások
@@ -1785,6 +1802,7 @@ phase2() {
   fi
 
   need_aur && aur_build
+  [[ $I_DE == gnome ]] && install_tela
   [[ $I_DE == gnome ]] && gnome_setup "$pic_dir"
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
   [[ $I_DE != none ]] && glava_setup
