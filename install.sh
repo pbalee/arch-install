@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.13)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.14)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
@@ -260,11 +260,12 @@ ask_software() {
       media       "Média: yt-dlp, ffmpeg, GStreamer kodekek, Drawing"  on \
       video       "Videó: Kdenlive, Shotcut, OBS, LosslessCut, Screenkey" on \
       freecad     "CAD: FreeCAD + QCAD"                               on \
-      devtools    "Fejlesztés: Godot (+Mono), JDK 17, Android SDK + adb" on \
+      devtools    "Fejlesztés: Godot (+Mono), JDK 17, Android SDK/NDK + adb (exporthoz)" on \
       ollama      "Ollama (helyi AI; NVIDIA-nál CUDA – nagy letöltés)"  on \
       brave       "Brave böngésző (AUR)"                              on \
       solidcraft  "SolidCraft CAD (GitHub release AppImage)"         on \
       profile     "XFCE profil visszatöltése GitHubról"               "$on_xfce" \
+      terep2      "Terep2 (Godot Linux-változat Drive-ról + eredeti DOS)" off \
       drives      "Extra meghajtók fstab-ba (/Games, /Download)"      off) || cancel
   # XFCE-specifikus tételek: más asztali környezetnél nem települnek (XScreenSaver, XFCE-profil)
   if [[ $DE != xfce ]]; then
@@ -582,7 +583,7 @@ build_package_list() {
                   ristretto parole mugshot
                   lightdm lightdm-gtk-greeter numlockx network-manager-applet) ;;
     gnome) PKGS+=(xorg-server gnome gdm
-                  gnome-tweaks extension-manager dconf-editor gnome-browser-connector
+                  gnome-tweaks extension-manager dconf-editor gnome-browser-connector gnome-shell-extensions
                   gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock gnome-shell-extension-blur-my-shell
                   baobab decibels epiphany evolution loupe malcontent nautilus orca papers rygel
                   showtime simple-scan snapshot sushi tecla yelp
@@ -614,6 +615,7 @@ build_package_list() {
   has media   && PKGS+=(yt-dlp ffmpeg gst-libav gst-plugins-bad gst-plugins-ugly gst-thumbnailers drawing)
   has video   && PKGS+=(kdenlive shotcut obs-studio screenkey)
   has devtools && PKGS+=(godot godot-mono jdk17-openjdk android-tools)
+  has terep2   && PKGS+=(dosbox)
   if has ollama; then
     PKGS+=(ollama)
     [[ $GPU == nvidia ]] && PKGS+=(ollama-cuda)
@@ -1020,11 +1022,115 @@ aur_build() {
   # ProtonUp-Qt: előbb a Python-függőségei (AUR), ez a sorrend számít
   has gaming   && pkgs+=(python-inputs python-steam protonup-qt)
   # Android SDK: az "android-sdk" az alap, a másik kettő ráépül
-  has devtools && pkgs+=(android-sdk android-sdk-platform-tools android-sdk-build-tools)
+  has devtools && pkgs+=(android-sdk android-sdk-platform-tools android-sdk-build-tools android-sdk-cmdline-tools-latest)
+  # GNOME: Rewaita (téma-színezés) + modern ikontéma
+  [[ $I_DE == gnome ]] && pkgs+=(rewaita tela-icon-theme)
   aur_install "${pkgs[@]}"
+  # ProtonUp-Qt tartalék: ha az AUR-ból nem sikerült, Flatpak-ból
+  if has gaming && ! pacman -Q protonup-qt >/dev/null 2>&1 && command -v flatpak >/dev/null 2>&1; then
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+    flatpak install -y --noninteractive flathub net.davidotek.pupgui2 || warn "A ProtonUp-Qt telepítése nem sikerült."
+  fi
   if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
     systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
   fi
+}
+
+# Godot Android-exporthoz: SDK-csomagok (platform, build-tools, NDK, CMake), licencek, debug keystore, szerkesztő-beállítások
+godot_android_setup() {
+  local h="/home/$I_USER" jdk=/usr/lib/jvm/java-17-openjdk sdk=/opt/android-sdk sm v f ks
+  sm=$sdk/cmdline-tools/latest/bin/sdkmanager
+  has devtools || return 0
+  say "Godot: Android SDK / Java beállítás"
+  printf 'export ANDROID_HOME=%s\nexport ANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" > /etc/profile.d/android-sdk.sh
+  if [[ -x $sm ]]; then
+    yes | JAVA_HOME=$jdk "$sm" --sdk_root="$sdk" --licenses >/dev/null 2>&1
+    JAVA_HOME=$jdk "$sm" --sdk_root="$sdk" "platforms;android-35" "build-tools;35.0.1" "build-tools;34.0.0" \
+        "cmake;3.10.2.4988404" "ndk;28.1.13356709" "platform-tools" >/dev/null 2>&1 \
+      || warn "Az Android SDK-csomagok egy része nem települt (sdkmanager)."
+  else
+    warn "Az sdkmanager nem található – az Android SDK-csomagokat kézzel kell telepíteni."
+  fi
+  if getent group sdkusers >/dev/null; then
+    chgrp -R sdkusers "$sdk" 2>/dev/null; chmod -R g+w "$sdk" 2>/dev/null
+    usermod -aG sdkusers "$I_USER" 2>/dev/null
+  fi
+  ks="$h/.local/share/godot/keystores/debug.keystore"
+  if [[ ! -e $ks ]]; then
+    runuser -l "$I_USER" -c "mkdir -p ~/.local/share/godot/keystores && $jdk/bin/keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore '$ks' -storepass android -dname 'CN=Android Debug,O=Android,C=US' -validity 9999 -deststoretype pkcs12" >/dev/null 2>&1 \
+      || warn "A Godot debug keystore létrehozása nem sikerült."
+  fi
+  mkdir -p "$h/.config/godot"
+  for v in 4 4.3 4.4 4.5 4.6; do
+    f="$h/.config/godot/editor_settings-$v.tres"
+    [[ -e $f ]] && continue
+    cat > "$f" <<GEOF
+[gd_resource type="EditorSettings" format=3]
+
+[resource]
+export/android/java_sdk_path = "$jdk"
+export/android/android_sdk_path = "$sdk"
+export/android/debug_keystore = "$ks"
+export/android/debug_keystore_user = "androiddebugkey"
+export/android/debug_keystore_pass = "android"
+GEOF
+  done
+  chown -R "$I_USER:$I_USER" "$h/.config/godot" "$h/.local/share/godot" 2>/dev/null
+  return 0
+}
+
+# Terep2: (1) az eredeti játékfájlok a GitHub-repóból, (2) a Godot-ból Linuxra fordított változat a Google Drive-ról
+# -> /opt/terep2. Ha a Drive-letöltés nem sikerül, az eredeti DOS-játék marad (DOSBox).
+install_terep2() {
+  local gid=11q6sYZ39WIHwkniY0DPoelaIKVqbR13L tmp bin
+  local url="https://github.com/${I_GH_USER}/Terep2/archive/refs/heads/main.tar.gz"
+  say "Terep2"
+  tmp=$(mktemp -d)
+  # 1) eredeti adatfájlok (a Godot-változat ezeket használja az exe mellől)
+  if curl -fsSL -o "$tmp/t.tgz" "$url" && mkdir -p /opt/terep2 \
+     && tar -xzf "$tmp/t.tgz" -C /opt/terep2 --strip-components=2 --wildcards '*/terep2/*' && [[ -f /opt/terep2/TEREP2.EXE ]]; then
+    cat > /usr/share/applications/terep2-dos.desktop <<'TEOF'
+[Desktop Entry]
+Type=Application
+Name=Terep2 (eredeti DOS)
+Comment=Terepjáró (eredeti DOS-játék, DOSBox)
+Exec=dosbox -c "mount c /opt/terep2" -c "c:" -c "TEREP2.EXE" -c "exit"
+Icon=dosbox
+Terminal=false
+Categories=Game;
+TEOF
+  else
+    warn "Az eredeti Terep2-fájlok letöltése nem sikerült (github.com/${I_GH_USER}/Terep2)."
+  fi
+  # 2) Godot-os Linux-változat a Google Drive-ról (gdown egy ideiglenes virtuális környezetben)
+  if pacman -S --needed --noconfirm python-pip >/dev/null 2>&1 \
+     && python -m venv "$tmp/venv" && "$tmp/venv/bin/pip" -q install gdown >/dev/null 2>&1 \
+     && "$tmp/venv/bin/gdown" --folder "https://drive.google.com/drive/folders/$gid" -O "$tmp/gd" >/dev/null 2>&1; then
+    bin=$(find "$tmp/gd" -type f -name '*.x86_64' | head -n1)
+    if [[ -n $bin ]]; then
+      mkdir -p /opt/terep2
+      cp -rf "$(dirname "$bin")/." /opt/terep2/
+      bin=/opt/terep2/$(basename "$bin")
+      chmod +x "$bin" /opt/terep2/*.sh 2>/dev/null
+      cat > /usr/share/applications/terep2.desktop <<TEOF
+[Desktop Entry]
+Type=Application
+Name=Terep2
+Comment=Terepjáró
+Exec=sh -c 'cd /opt/terep2 && exec "$bin"'
+Icon=applications-games
+Terminal=false
+Categories=Game;
+TEOF
+      say "Terep2 (Godot, Linux) telepítve"
+    else
+      warn "A Drive-mappában nincs .x86_64 fájl."
+    fi
+  else
+    warn "A Terep2 Linux-változata nem tölthető le a Google Drive-ról (megosztás: 'bárki, akinek megvan a link')."
+  fi
+  chmod -R a+rX /opt/terep2 2>/dev/null
+  rm -rf "$tmp"
 }
 
 # git_ext <uuid> <git-url> [célmappa]: GNOME-bővítmény telepítése GitHubról (rendszerszinten)
@@ -1212,6 +1318,7 @@ remember-numlock-state=true
 event-sounds=false
 
 [org/gnome/desktop/wm/preferences]
+num-workspaces=4
 resize-with-right-button=true
 action-middle-click-titlebar='lower'
 button-layout='icon,menu:minimize,maximize,close'
@@ -1228,14 +1335,18 @@ name='Terminál'
 command='open-terminal'
 binding='<Super>t'
 
+[org/gnome/mutter]
+dynamic-workspaces=false
+
 [org/gnome/nautilus/preferences]
 default-sort-order='type'
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'blur-my-shell@aunetx', 'compiz-windows-effect@hermes83.github.com', 'compiz-alike-magic-lamp-effect@hermes83.github.com', 'desktop-cube@schneegans.github.com']
-favorite-apps=['firefox.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Nautilus.desktop', 'galculator.desktop', 'org.xfce.mousepad.desktop', 'org.gnome.Console.desktop']
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'blur-my-shell@aunetx', 'compiz-windows-effect@hermes83.github.com', 'compiz-alike-magic-lamp-effect@hermes83.github.com', 'desktop-cube@schneegans.github.com', 'user-theme@gnome-shell-extensions.gcampax.github.com']
+favorite-apps=['firefox.desktop', 'org.gnome.Settings.desktop', 'com.mattjakeman.ExtensionManager.desktop', 'org.gnome.tweaks.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Nautilus.desktop', 'galculator.desktop', 'org.xfce.mousepad.desktop', 'org.gnome.Console.desktop']
 
 [org/gnome/shell/extensions/dash-to-dock]
+disable-overview-on-startup=true
 dock-position='BOTTOM'
 dash-max-icon-size=48
 background-opacity=0.8
@@ -1288,6 +1399,11 @@ sleep-inactive-ac-type='nothing'
 sleep-inactive-battery-type='nothing'
 EOF
   install_max_refresh
+  GN_ICON=Papirus-Dark
+  if [[ -d /usr/share/icons/Tela-dark ]]; then
+    GN_ICON=Tela-dark
+    printf "[org/gnome/desktop/interface]\nicon-theme='Tela-dark'\n" > /etc/dconf/db/local.d/10-icons
+  fi
   dconf update || warn "dconf update nem sikerült – a GNOME alapbeállítások nem lépnek életbe."
 
   # Qt-programok (KeePassXC, qBittorrent, Okular, Kdenlive...) sötét témája: Kvantum MateriaDark
@@ -1295,7 +1411,7 @@ EOF
   grep -q '^QT_STYLE_OVERRIDE=' /etc/environment 2>/dev/null || printf 'QT_STYLE_OVERRIDE=kvantum\nQT_QPA_PLATFORMTHEME=gtk3\n' >> /etc/environment
   mkdir -p "$h/.config/Kvantum"
   [[ $I_HOME_NEW == 1 || ! -e $h/.config/Kvantum/kvantum.kvconfig ]] && printf '[General]\ntheme=MateriaDark\n' > "$h/.config/Kvantum/kvantum.kvconfig"
-  [[ $I_HOME_NEW == 1 || ! -e $h/.config/kdeglobals ]] && printf '[Icons]\nTheme=Papirus-Dark\n' > "$h/.config/kdeglobals"
+  [[ $I_HOME_NEW == 1 || ! -e $h/.config/kdeglobals ]] && printf '[Icons]\nTheme=%s\n' "$GN_ICON" > "$h/.config/kdeglobals"
   return 0
 }
 
@@ -1673,6 +1789,8 @@ phase2() {
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
   [[ $I_DE != none ]] && glava_setup
   audacious_skin
+  godot_android_setup
+  has terep2 && install_terep2
   has solidcraft && install_solidcraft
   fix_home_owner
 }
