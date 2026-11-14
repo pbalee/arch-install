@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.14)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.15)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
+SCRIPT_VERSION="v3.15"
+SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
 GH_USER="pbalee"
@@ -78,9 +80,12 @@ ask_password() {
 
 # ---------------------------------------------------------------- logó -------
 banner() {
-  clear
-  printf '%s' "$CYN"
-  cat <<'ART'
+  local cols rows i vpad pad total col
+  local -a art
+  cols=$(tput cols 2>/dev/null); rows=$(tput lines 2>/dev/null)
+  [[ $cols =~ ^[0-9]+$ ]] || cols=80
+  [[ $rows =~ ^[0-9]+$ ]] || rows=24
+  mapfile -t art <<'ART'
                 .-'''''''''''-.
           .-''      .-----.      ''-.
        .'                             '.
@@ -97,10 +102,33 @@ banner() {
           '-.                     .-'
              '-._______________.-'
 ART
-  printf '%s' "$RST"
-  printf '%s       B L U E L I G H T   ::   A R C H   I N S T A L L E R%s\n' "$WHT" "$RST"
-  printf '%s              [ Customized by pbalee ]%s\n\n' "$CYN" "$RST"
-  printf '   Arch Linux Automata Telepítő  |  Blackice GRUB  |  UEFI\n\n'
+  local -a txt=(
+    "B L U E L I G H T   ::   A R C H   I N S T A L L E R"
+    "[ Customized by pbalee ]"
+    ""
+    "Arch Linux Automata Telepítő  |  Blackice GRUB  |  UEFI"
+    "${SCRIPT_VERSION}  ·  ${SCRIPT_DATE}"
+    ""
+    "Nyomj Entert a folytatáshoz..."
+  )
+  total=$(( ${#art[@]} + 1 + ${#txt[@]} ))
+  vpad=$(( (rows - total) / 2 )); (( vpad < 0 )) && vpad=0
+  clear
+  for ((i = 0; i < vpad; i++)); do printf '\n'; done
+  # a logó egy blokként, azonos bal margóval (hogy ne torzuljon)
+  pad=$(( (cols - 41) / 2 )); (( pad < 0 )) && pad=0
+  printf '%s' "$CYN"
+  for i in "${!art[@]}"; do printf '%*s%s\n' "$pad" '' "${art[$i]}"; done
+  printf '%s\n' "$RST"
+  for i in "${!txt[@]}"; do
+    case $i in 0) col=$WHT ;; 4) col=$CYN ;; *) col=$RST ;; esac
+    pad=$(( (cols - ${#txt[$i]}) / 2 )); (( pad < 0 )) && pad=0
+    if (( i == ${#txt[@]} - 1 )); then
+      printf '%*s%s%s%s ' "$pad" '' "$col" "${txt[$i]}" "$RST"
+    else
+      printf '%*s%s%s%s\n' "$pad" '' "$col" "${txt[$i]}" "$RST"
+    fi
+  done
 }
 
 # ------------------------------------------------------- pacman.conf --------
@@ -1861,7 +1889,7 @@ main() {
   : > "$LOG_FILE"
   set_console
   banner
-  read -rp "  Nyomj Entert a folytatáshoz... " _
+  read -r _
   preflight
   ask_basics
   ask_software
