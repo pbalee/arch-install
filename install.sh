@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.15)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.17)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.15"
+SCRIPT_VERSION="v3.17"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -43,7 +43,8 @@ BLU=$'\e[1;34m'; CYN=$'\e[1;36m'; WHT=$'\e[1;37m'
 
 step() { printf '\n%s==>%s %s%s%s\n' "$BLU" "$RST" "$CYN" "$*" "$RST"; }
 ok()   { printf '%s [OK]%s %s\n' "$GRN" "$RST" "$*"; }
-warn() { printf '%s [!]%s %s\n' "$YEL" "$RST" "$*" >&2; }
+WARN_FILE="/tmp/arch-install-warnings.txt"
+warn() { printf '%s [!]%s %s\n' "$YEL" "$RST" "$*" >&2; printf '%s\n' "$*" >> "$WARN_FILE"; }
 die()  { printf '\n%s [HIBA]%s %s\n' "$RED" "$RST" "$*" >&2; exit 1; }
 must() { "$@" || die "Sikertelen parancs: $*  (napló: $LOG_FILE)"; }
 # Parancs futtatása pty-n keresztül: marad a szín / ILoveCandy, közben naplózódik.
@@ -479,25 +480,48 @@ ask_disk_existing() {
   if (( FORMAT_ESP == 1 && esp_mb >= 500 )); then ESP_MOUNT=/boot; else ESP_MOUNT=/boot/efi; fi
 }
 
+# méret zárójelben: meglévő partíciónál a valós méret, új partíciónál a tervezett (GiB)
+sz_dev()  { local b; b=$(blockdev --getsize64 "$1" 2>/dev/null) && [[ $b =~ ^[0-9]+$ ]] \
+              && awk -v b="$b" 'BEGIN{printf "(%.1f GiB)", b/1073741824}'; }
+sz_plan() { printf '(kb. %s GiB)' "$1"; }
+
 confirm_all() {
-  local s=""
+  local s="" esp_sz root_sz home_sz swap_sz dsk
+  dsk=$(blockdev --getsize64 "$TARGET" 2>/dev/null) && DISK_GIB=$(( dsk / 1073741824 ))
+  case $MODE in
+    new)
+      esp_sz=$(sz_plan "$ESP_SIZE_GIB")
+      if (( USE_HOME )); then
+        root_sz=$(sz_plan "$ROOT_GIB")
+        home_sz=$(sz_plan $(( DISK_GIB - ESP_SIZE_GIB - ROOT_GIB - SWAP_GIB )))
+      else
+        root_sz=$(sz_plan $(( DISK_GIB - ESP_SIZE_GIB - SWAP_GIB )))
+      fi
+      swap_sz=$(sz_plan "$SWAP_GIB") ;;
+    keephome)
+      esp_sz=$(sz_plan "$ESP_SIZE_GIB"); root_sz=$(sz_plan "$ROOT_GIB")
+      home_sz=$(sz_dev "$HOME_PART"); swap_sz=$(sz_plan "$SWAP_GIB") ;;
+    *)
+      esp_sz=$(sz_dev "$ESP_PART"); root_sz=$(sz_dev "$ROOT_PART")
+      home_sz=$(sz_dev "$HOME_PART"); swap_sz=$(sz_dev "$SWAP_PART") ;;
+  esac
   s+="Gépnév:         $HOSTNAME_\n"
   s+="Felhasználó:    $USERNAME_\n"
   s+="Asztali:        $DE     Videókártya: $GPU\n"
   s+="Extrák:         $(tr '\n' ' ' <<<"$EXTRAS")\n\n"
   case $MODE in
-    new)      s+="LEMEZ:  $TARGET  --  a TELJES tartalma TÖRLŐDIK!\n" ;;
-    keephome) s+="LEMEZ:  $TARGET  --  a /home MARAD, törlődik: ${DEL_PARTS[*]}\n" ;;
+    new)      s+="LEMEZ:  $TARGET  ($DISK_GIB GiB)  --  a TELJES tartalma TÖRLŐDIK!\n" ;;
+    keephome) s+="LEMEZ:  $TARGET  ($DISK_GIB GiB)  --  a /home MARAD, törlődik: ${DEL_PARTS[*]}\n" ;;
     *)        s+="LEMEZ:  meglévő partíciók használata\n" ;;
   esac
-  s+="  EFI   $ESP_PART  ->  $ESP_MOUNT   $( ((FORMAT_ESP)) && echo '[FORMÁZÁS]' || echo '[megmarad]' )\n"
-  s+="  root  $ROOT_PART  ($ROOT_FS)   [FORMÁZÁS]\n"
+  s+="  EFI   $ESP_PART  ->  $ESP_MOUNT   $( ((FORMAT_ESP)) && echo '[FORMÁZÁS]' || echo '[megmarad]' )  $esp_sz\n"
+  s+="  root  $ROOT_PART  ($ROOT_FS)   [FORMÁZÁS]  $root_sz\n"
   if (( USE_HOME )); then
-    s+="  home  $HOME_PART  ($HOME_FS)   $( ((FORMAT_HOME)) && echo '[FORMÁZÁS]' || echo '[ADATOK MEGMARADNAK]' )\n"
+    s+="  home  $HOME_PART  ($HOME_FS)   $( ((FORMAT_HOME)) && echo '[FORMÁZÁS]' || echo '[ADATOK MEGMARADNAK]' )  $home_sz\n"
   else
-    s+="  home  (nincs külön partíció)\n"
+    s+="  home  (nincs külön partíció – a root kapja a helyet)\n"
   fi
-  if (( USE_SWAP )); then s+="  swap  $SWAP_PART\n"; else s+="  swap  (nincs)\n"; fi
+  if (( USE_SWAP )); then s+="  swap  $SWAP_PART  $swap_sz\n"; else s+="  swap  (nincs)\n"; fi
   s+="\nElindítsuk a telepítést?"
   dialog --backtitle "$BACKTITLE" --cr-wrap --no-collapse --defaultno \
          --title "Összegzés" --yesno "$s" 0 0 || cancel
@@ -740,7 +764,7 @@ case ${I_DARK:-none} in
 esac
 ICON_THEME=Papirus-Dark
 say()  { printf '\n\e[1;36m  -> %s\e[0m\n' "$*"; }
-warn() { printf '\e[1;33m  [!] %s\e[0m\n' "$*"; }
+warn() { printf '\e[1;33m  [!] %s\e[0m\n' "$*"; printf '%s\n' "$*" >> /var/log/arch-install-warnings.txt; }
 
 ALIASES=$(cat <<'ALIASBLOCK'
 # --- pbalee aliasok ---
@@ -1034,9 +1058,20 @@ aur_install() {
   # Nincs -debug csomag és forrásmásolás a hibakereséshez (felesleges, és nagy csomagoknál percekig tart)
   printf 'OPTIONS=("${OPTIONS[@]/#debug/!debug}")\n' > /var/tmp/builder/.makepkg.conf
   chown builder:builder /var/tmp/builder/.makepkg.conf
+  # yay: az AUR-függőségeket (pl. a ProtonUp-Qt python-moduljait) is automatikusan feloldja
+  if ! command -v yay >/dev/null 2>&1; then
+    runuser -l builder -c "rm -rf /tmp/yay-bin && cd /tmp && git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm" \
+      || warn "A yay telepítése nem sikerült."
+  fi
   for pkg in "$@"; do
     say "AUR: $pkg"
-    runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "Nem sikerült: $pkg"
+    if command -v yay >/dev/null 2>&1; then
+      runuser -l builder -c "yay -S --noconfirm --needed --answerdiff None --answerclean None --removemake $pkg" \
+        || runuser -l builder -c "yay -S --noconfirm --needed --answerdiff None --answerclean None --removemake $pkg" \
+        || warn "AUR-csomag nem települt: $pkg"
+    else
+      runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "AUR-csomag nem települt: $pkg"
+    fi
   done
   userdel -r builder 2>/dev/null
   rm -f /etc/sudoers.d/99-builder
@@ -1057,11 +1092,6 @@ aur_build() {
   # GNOME: Rewaita (téma-színezés) + modern ikontéma
   [[ $I_DE == gnome ]] && pkgs+=(rewaita)
   aur_install "${pkgs[@]}"
-  # ProtonUp-Qt tartalék: ha az AUR-ból nem sikerült, Flatpak-ból
-  if has gaming && ! pacman -Q protonup-qt >/dev/null 2>&1 && command -v flatpak >/dev/null 2>&1; then
-    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
-    flatpak install -y --noninteractive flathub net.davidotek.pupgui2 || warn "A ProtonUp-Qt telepítése nem sikerült."
-  fi
   if has rustdesk && pacman -Q rustdesk-bin >/dev/null 2>&1; then
     systemctl enable rustdesk || warn "A rustdesk szolgáltatás engedélyezése nem sikerült."
   fi
@@ -1872,14 +1902,21 @@ configure_system() {
 
   rm -f /mnt/root/install.env /mnt/root/chroot-setup.sh
   cp "$LOG_FILE" /mnt/var/log/arch-install.log 2>/dev/null || true
+  [[ -s $WARN_FILE ]] && cat "$WARN_FILE" >> /mnt/var/log/arch-install-warnings.txt
+  return 0
 }
 
 finish() {
+  if [[ -s /mnt/var/log/arch-install-warnings.txt ]]; then
+    dialog --backtitle "$BACKTITLE" --title "Figyelmeztetések a telepítés közben" --exit-label "Tovább" \
+      --textbox /mnt/var/log/arch-install-warnings.txt 0 0
+    cp /mnt/var/log/arch-install-warnings.txt /root/arch-install-warnings.txt 2>/dev/null || true
+  fi
   sync
   umount -R /mnt 2>/dev/null || true
   swapoff -a 2>/dev/null || true
   clear
-  printf '%s=== A telepítés elkészült! Napló: /var/log/arch-install.log ===%s\n\n' "$GRN" "$RST"
+  printf '%s=== A telepítés elkészült! ===%s\n  Teljes napló:        /var/log/arch-install.log\n  Hibák, kihagyások:   /var/log/arch-install-warnings.txt\n\n' "$GRN" "$RST"
   if yn "Kész" "Indítsuk újra a gépet?\n\n(Ne felejtsd el kihúzni a telepítő USB-t.)"; then
     reboot
   fi
