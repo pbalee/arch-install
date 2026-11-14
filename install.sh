@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.17)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.18)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.17"
+SCRIPT_VERSION="v3.18"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -1907,6 +1907,10 @@ configure_system() {
 }
 
 finish() {
+  local el=$(( SECONDS - ${INSTALL_START:-$SECONDS} )) dur
+  dur=$(printf '%d perc %02d mp' $(( el / 60 )) $(( el % 60 )))
+  printf 'A telepítés időtartama: %s\n' "$dur" >> "$LOG_FILE"
+  printf 'A telepítés időtartama: %s\n' "$dur" >> /mnt/var/log/arch-install.log 2>/dev/null
   if [[ -s /mnt/var/log/arch-install-warnings.txt ]]; then
     dialog --backtitle "$BACKTITLE" --title "Figyelmeztetések a telepítés közben" --exit-label "Tovább" \
       --textbox /mnt/var/log/arch-install-warnings.txt 0 0
@@ -1916,8 +1920,8 @@ finish() {
   umount -R /mnt 2>/dev/null || true
   swapoff -a 2>/dev/null || true
   clear
-  printf '%s=== A telepítés elkészült! ===%s\n  Teljes napló:        /var/log/arch-install.log\n  Hibák, kihagyások:   /var/log/arch-install-warnings.txt\n\n' "$GRN" "$RST"
-  if yn "Kész" "Indítsuk újra a gépet?\n\n(Ne felejtsd el kihúzni a telepítő USB-t.)"; then
+  printf '%s=== A telepítés elkészült!  (időtartam: %s) ===%s\n  Teljes napló:        /var/log/arch-install.log\n  Hibák, kihagyások:   /var/log/arch-install-warnings.txt\n\n' "$GRN" "$dur" "$RST"
+  if yn "Kész" "A telepítés időtartama: $dur\n\nIndítsuk újra a gépet?\n\n(Ne felejtsd el kihúzni a telepítő USB-t.)"; then
     reboot
   fi
 }
@@ -1932,6 +1936,7 @@ main() {
   ask_software
   ask_disk
   confirm_all
+  INSTALL_START=$SECONDS   # az utolsó megerősítés (Enter) pillanata
   prepare_disks
   install_base
   configure_system
