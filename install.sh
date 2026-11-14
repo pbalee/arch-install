@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.18)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.19)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.18"
+SCRIPT_VERSION="v3.19"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -1647,6 +1647,14 @@ glava_setup() {
   }
   mkdir -p "$h/.config/glava"
   cp -rn /etc/xdg/glava/. "$h/.config/glava/" 2>/dev/null || true
+  # Sötét ("feketés") színek mindegyik GLava-modulban; új home-nál, vagy ha még nem állítottuk be (a saját módosításodat nem írjuk felül)
+  local gd="$h/.config/glava"
+  if [[ $I_HOME_NEW == 1 || ! -e $gd/.bluelight-dark ]]; then
+    sed -i -E 's|^#define COLOR .*|#define COLOR @fg:mix(#222222, #3c3c3c, clamp(d / GRADIENT, 0, 1))|' "$gd/bars.glsl" "$gd/radial.glsl" 2>/dev/null
+    sed -i -E 's|^#define COLOR .*|#define COLOR @fg:mix(#222222, #3c3c3c, clamp(pos / GRADIENT, 0, 1))|' "$gd/graph.glsl" 2>/dev/null
+    sed -i -E 's|^#define BASE_COLOR .*|#define BASE_COLOR @fg:vec4(0.133, 0.133, 0.133, 1)|' "$gd/wave.glsl" 2>/dev/null
+    touch "$gd/.bluelight-dark"
+  fi
   cat > "$h/.local/bin/glava-start" <<'GLV'
 #!/usr/bin/env bash
 # GLava indító: az aktuális kijelző geometriáját beírja az rc.glsl-be, majd elindítja a vizualizálót.
