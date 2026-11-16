@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.19)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.23)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.19"
+SCRIPT_VERSION="v3.23"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -294,7 +294,7 @@ ask_software() {
       brave       "Brave böngésző (AUR)"                              on \
       solidcraft  "SolidCraft CAD (GitHub release AppImage)"         on \
       profile     "XFCE profil visszatöltése GitHubról"               "$on_xfce" \
-      terep2      "Terep2 (Godot Linux-változat Drive-ról + eredeti DOS)" off \
+      terep2      "Terep2 (Godot, Linux – Google Drive-ról)" off \
       drives      "Extra meghajtók fstab-ba (/Games, /Download)"      off) || cancel
   # XFCE-specifikus tételek: más asztali környezetnél nem települnek (XScreenSaver, XFCE-profil)
   if [[ $DE != xfce ]]; then
@@ -622,8 +622,9 @@ build_package_list() {
   # Sötét téma + Qt/Kvantum (XFCE és GNOME alatt)
   [[ $DE == xfce || $DE == gnome ]] && PKGS+=(materia-gtk-theme papirus-icon-theme kvantum kvantum-qt5 kvantum-theme-materia)
 
-  [[ $ROOT_FS == btrfs || $HOME_FS == btrfs ]] && PKGS+=(btrfs-progs)
-  [[ $ROOT_FS == xfs   || $HOME_FS == xfs   ]] && PKGS+=(xfsprogs)
+  # Lemez- és fájlrendszer-eszközök (minden esetben)
+  PKGS+=(gparted dosfstools ntfs-3g exfatprogs btrfs-progs xfsprogs f2fs-tools jfsutils nilfs-utils
+         udftools mtools gpart polkit)
 
   # ---- ASZTALI KÖRNYEZET: itt vannak szétválasztva az XFCE-s és a GNOME-os csomagok ----
   case $DE in
@@ -635,7 +636,7 @@ build_package_list() {
                   ristretto parole mugshot
                   lightdm lightdm-gtk-greeter numlockx network-manager-applet) ;;
     gnome) PKGS+=(xorg-server gnome gdm
-                  gnome-tweaks extension-manager dconf-editor gnome-browser-connector gnome-shell-extensions
+                  gnome-tweaks extension-manager dconf-editor gnome-browser-connector gnome-shell-extensions sassc ttf-jetbrains-mono ttf-fira-code
                   gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock gnome-shell-extension-blur-my-shell
                   baobab decibels epiphany evolution loupe malcontent nautilus orca papers rygel
                   showtime simple-scan snapshot sushi tecla yelp
@@ -645,7 +646,7 @@ build_package_list() {
                   gnome-remote-desktop gnome-session gnome-settings-daemon gnome-shell gnome-software
                   gnome-system-monitor gnome-text-editor gnome-tour gnome-user-docs gnome-user-share gnome-weather
                   grilo-plugins gvfs-goa gvfs-onedrive xdg-desktop-portal-gnome xdg-user-dirs-gtk) ;;
-    kde)   PKGS+=(xorg-server plasma-meta sddm konsole dolphin kate ark) ;;
+    kde)   PKGS+=(xorg-server plasma-meta sddm konsole dolphin kate ark kvantum git) ;;
   esac
 
   case $GPU in
@@ -667,7 +668,6 @@ build_package_list() {
   has media   && PKGS+=(yt-dlp ffmpeg gst-libav gst-plugins-bad gst-plugins-ugly gst-thumbnailers drawing)
   has video   && PKGS+=(kdenlive shotcut obs-studio screenkey)
   has devtools && PKGS+=(godot godot-mono jdk17-openjdk android-tools)
-  has terep2   && PKGS+=(dosbox)
   if has ollama; then
     PKGS+=(ollama)
     [[ $GPU == nvidia ]] && PKGS+=(ollama-cuda)
@@ -1097,6 +1097,66 @@ aur_build() {
   fi
 }
 
+# GNOME külső: Win12X-Fantasy (Dark, Compact) GTK/shell-téma, Reversal ikonok, Oxanium + JetBrains Mono betűk
+install_gnome_look() {
+  local tmp; tmp=$(mktemp -d)
+  say "GNOME: téma, ikonok, betűtípusok"
+  if [[ ! -d /usr/share/themes/Win12X-Fantasy-Dark-Compact ]]; then
+    git clone --depth 1 https://github.com/yeyushengfan258/Win12X-Fantasy-gtk-theme.git "$tmp/gtk" >/dev/null 2>&1 \
+      && (cd "$tmp/gtk" && ./install.sh -d /usr/share/themes -t default -c dark -s compact >/dev/null 2>&1) \
+      || warn "A Win12X-Fantasy téma telepítése nem sikerült."
+  fi
+  if [[ ! -d /usr/share/icons/Reversal-dark ]]; then
+    git clone --depth 1 https://github.com/yeyushengfan258/Reversal-icon-theme.git "$tmp/rev" >/dev/null 2>&1 \
+      && (cd "$tmp/rev" && ./install.sh -d /usr/share/icons >/dev/null 2>&1) \
+      || warn "A Reversal ikontéma telepítése nem sikerült."
+  fi
+  [[ -d /usr/share/icons/Reversal-dark ]] || install_tela
+  # Oxanium (Google Fonts, változtatható súlyú betű)
+  mkdir -p /usr/local/share/fonts/oxanium
+  curl -fsSL -o "/usr/local/share/fonts/oxanium/Oxanium[wght].ttf" \
+      "https://raw.githubusercontent.com/google/fonts/main/ofl/oxanium/Oxanium%5Bwght%5D.ttf" \
+    || warn "Az Oxanium betűtípus letöltése nem sikerült."
+  fc-cache -f >/dev/null 2>&1
+  rm -rf "$tmp"
+}
+
+# KDE külső: Endless (Windows11-Endless) globális téma + Win11 ikonok + Afterglow kurzor + SDDM-téma
+install_kde_look() {
+  local tmp h="/home/$I_USER" f g k v line mark="/home/$I_USER/.config/.bluelight-endless"
+  tmp=$(mktemp -d)
+  say "KDE: Endless téma"
+  if git clone --depth 1 https://github.com/yeyushengfan258/Endless-kde.git "$tmp/e" >/dev/null 2>&1 \
+     && (cd "$tmp/e" && ./install.sh >/dev/null 2>&1); then
+    mkdir -p /usr/share/sddm/themes /etc/sddm.conf.d
+    cp -r "$tmp/e/sddm/6.0/Windows11-Endless" /usr/share/sddm/themes/ 2>/dev/null \
+      && printf '[Theme]\nCurrent=Windows11-Endless\n' > /etc/sddm.conf.d/10-theme.conf
+  else
+    warn "Az Endless KDE-téma telepítése nem sikerült."; rm -rf "$tmp"; return 0
+  fi
+  git clone --depth 1 https://github.com/yeyushengfan258/Win11-icon-theme.git "$tmp/i" >/dev/null 2>&1 \
+    && (cd "$tmp/i" && ./install.sh -d /usr/share/icons >/dev/null 2>&1) || warn "A Win11 ikontéma telepítése nem sikerült."
+  git clone --depth 1 https://github.com/yeyushengfan258/Afterglow-cursors.git "$tmp/c" >/dev/null 2>&1 \
+    && (cd "$tmp/c" && ./install.sh >/dev/null 2>&1) || warn "Az Afterglow kurzortéma telepítése nem sikerült."
+  # A téma saját alapbeállításai a felhasználónak (új home-nál, vagy ha még nem történt meg)
+  if [[ $I_HOME_NEW == 1 || ! -e $mark ]]; then
+    mkdir -p "$h/.config/Kvantum"
+    printf '[General]\ntheme=Windows11-Endless\n' > "$h/.config/Kvantum/kvantum.kvconfig"
+    f=$(ls /usr/share/plasma/look-and-feel/com.github.yeyushengfan258.Windows11-Endless/contents/defaults 2>/dev/null)
+    {
+      echo "kdeglobals|KDE|LookAndFeelPackage|com.github.yeyushengfan258.Windows11-Endless"
+      [[ -n $f ]] && sed -nE 's/^\[([^]]+)\]\[([^]]+)\]$/@\1|\2/p;s/^([A-Za-z0-9_]+)=(.*)$/=\1|\2/p' "$f" \
+        | awk -F'|' '/^@/{file=substr($1,2);grp=$2;next}/^=/{print file"|"grp"|"substr($1,2)"|"$2}'
+    } > "$tmp/kde.keys"
+    while IFS='|' read -r f g k v; do
+      [[ -n $f && -n $k ]] || continue
+      runuser -l "$I_USER" -c "kwriteconfig6 --file '$f' --group '$g' --key '$k' '$v'" 2>/dev/null
+    done < "$tmp/kde.keys"
+    : > "$mark"; chown "$I_USER:$I_USER" "$mark" "$h/.config/Kvantum" "$h/.config/Kvantum/kvantum.kvconfig" 2>/dev/null
+  fi
+  rm -rf "$tmp"
+}
+
 # Tela ikontéma (modern): csak a standard színváltozat, közvetlenül GitHubról (az AUR-csomag mind a 15 színt építi, nagyon lassú)
 install_tela() {
   local tmp; tmp=$(mktemp -d)
@@ -1154,30 +1214,13 @@ GEOF
   return 0
 }
 
-# Terep2: (1) az eredeti játékfájlok a GitHub-repóból, (2) a Godot-ból Linuxra fordított változat a Google Drive-ról
-# -> /opt/terep2. Ha a Drive-letöltés nem sikerül, az eredeti DOS-játék marad (DOSBox).
+# Terep2 (Godot, Linux): a Google Drive-ról -> /opt/terep2. Ha a letöltött mappában nincsenek meg az eredeti
+# adatfájlok (.PCX), azokat a GitHub-repóból pótolja (a Godot-változat az exe mellől olvassa őket).
 install_terep2() {
   local gid=11q6sYZ39WIHwkniY0DPoelaIKVqbR13L tmp bin
   local url="https://github.com/${I_GH_USER}/Terep2/archive/refs/heads/main.tar.gz"
   say "Terep2"
   tmp=$(mktemp -d)
-  # 1) eredeti adatfájlok (a Godot-változat ezeket használja az exe mellől)
-  if curl -fsSL -o "$tmp/t.tgz" "$url" && mkdir -p /opt/terep2 \
-     && tar -xzf "$tmp/t.tgz" -C /opt/terep2 --strip-components=2 --wildcards '*/terep2/*' && [[ -f /opt/terep2/TEREP2.EXE ]]; then
-    cat > /usr/share/applications/terep2-dos.desktop <<'TEOF'
-[Desktop Entry]
-Type=Application
-Name=Terep2 (eredeti DOS)
-Comment=Terepjáró (eredeti DOS-játék, DOSBox)
-Exec=dosbox -c "mount c /opt/terep2" -c "c:" -c "TEREP2.EXE" -c "exit"
-Icon=dosbox
-Terminal=false
-Categories=Game;
-TEOF
-  else
-    warn "Az eredeti Terep2-fájlok letöltése nem sikerült (github.com/${I_GH_USER}/Terep2)."
-  fi
-  # 2) Godot-os Linux-változat a Google Drive-ról (gdown egy ideiglenes virtuális környezetben)
   if pacman -S --needed --noconfirm python-pip >/dev/null 2>&1 \
      && python -m venv "$tmp/venv" && "$tmp/venv/bin/pip" -q install gdown >/dev/null 2>&1 \
      && "$tmp/venv/bin/gdown" --folder "https://drive.google.com/drive/folders/$gid" -O "$tmp/gd" >/dev/null 2>&1; then
@@ -1187,6 +1230,11 @@ TEOF
       cp -rf "$(dirname "$bin")/." /opt/terep2/
       bin=/opt/terep2/$(basename "$bin")
       chmod +x "$bin" /opt/terep2/*.sh 2>/dev/null
+      if [[ -z $(find /opt/terep2 -maxdepth 1 -iname '*.pcx' | head -n1) ]] \
+         && curl -fsSL -o "$tmp/t.tgz" "$url"; then
+        tar -xzf "$tmp/t.tgz" -C /opt/terep2 --strip-components=2 --skip-old-files --wildcards '*/terep2/*' \
+          || warn "Az eredeti Terep2 adatfájlok pótlása nem sikerült."
+      fi
       cat > /usr/share/applications/terep2.desktop <<TEOF
 [Desktop Entry]
 Type=Application
@@ -1202,7 +1250,7 @@ TEOF
       warn "A Drive-mappában nincs .x86_64 fájl."
     fi
   else
-    warn "A Terep2 Linux-változata nem tölthető le a Google Drive-ról (megosztás: 'bárki, akinek megvan a link')."
+    warn "A Terep2 nem tölthető le a Google Drive-ról (megosztás: 'bárki, akinek megvan a link')."
   fi
   chmod -R a+rX /opt/terep2 2>/dev/null
   rm -rf "$tmp"
@@ -1474,11 +1522,24 @@ sleep-inactive-ac-type='nothing'
 sleep-inactive-battery-type='nothing'
 EOF
   install_max_refresh
+  # Külső: ikon (Reversal-dark > Tela-dark > Papirus-Dark), GTK/shell-téma, betűtípusok
+  local ui_sz=10 doc_sz=10 mono_sz=10   # betűméretek (pt) – itt állítható
   GN_ICON=Papirus-Dark
-  if [[ -d /usr/share/icons/Tela-dark ]]; then
-    GN_ICON=Tela-dark
-    printf "[org/gnome/desktop/interface]\nicon-theme='Tela-dark'\n" > /etc/dconf/db/local.d/10-icons
-  fi
+  [[ -d /usr/share/icons/Tela-dark    ]] && GN_ICON=Tela-dark
+  [[ -d /usr/share/icons/Reversal-dark ]] && GN_ICON=Reversal-dark
+  {
+    echo "[org/gnome/desktop/interface]"
+    echo "icon-theme='$GN_ICON'"
+    if [[ -d /usr/share/themes/Win12X-Fantasy-Dark-Compact ]]; then
+      echo "gtk-theme='Win12X-Fantasy-Dark-Compact'"
+    fi
+    fc-list 2>/dev/null | grep -qi oxanium && echo "font-name='Oxanium @wght=400 $ui_sz'"
+    fc-list 2>/dev/null | grep -qi 'JetBrains Mono' && echo "document-font-name='JetBrains Mono Light @wght=300 $doc_sz'"
+    fc-list 2>/dev/null | grep -qi 'Fira Code' && echo "monospace-font-name='Fira Code @wght=400 $mono_sz'"
+    if [[ -d /usr/share/themes/Win12X-Fantasy-Dark-Compact ]]; then
+      printf "\n[org/gnome/shell/extensions/user-theme]\nname='Win12X-Fantasy-Dark-Compact'\n"
+    fi
+  } > /etc/dconf/db/local.d/10-look
   dconf update || warn "dconf update nem sikerült – a GNOME alapbeállítások nem lépnek életbe."
 
   # Qt-programok (KeePassXC, qBittorrent, Okular, Kdenlive...) sötét témája: Kvantum MateriaDark
@@ -1647,12 +1708,18 @@ glava_setup() {
   }
   mkdir -p "$h/.config/glava"
   cp -rn /etc/xdg/glava/. "$h/.config/glava/" 2>/dev/null || true
-  # Sötét ("feketés") színek mindegyik GLava-modulban; új home-nál, vagy ha még nem állítottuk be (a saját módosításodat nem írjuk felül)
-  local gd="$h/.config/glava"
+  # Sötét ("feketés") színek: sima GLSL kifejezés (a GLava @fg: kötése nélkül), csak ha a sor egysoros;
+  # az eredeti fájl .orig néven megmarad. A saját módosításodat nem írjuk felül.
+  local gd="$h/.config/glava" gf expr
   if [[ $I_HOME_NEW == 1 || ! -e $gd/.bluelight-dark ]]; then
-    sed -i -E 's|^#define COLOR .*|#define COLOR @fg:mix(#222222, #3c3c3c, clamp(d / GRADIENT, 0, 1))|' "$gd/bars.glsl" "$gd/radial.glsl" 2>/dev/null
-    sed -i -E 's|^#define COLOR .*|#define COLOR @fg:mix(#222222, #3c3c3c, clamp(pos / GRADIENT, 0, 1))|' "$gd/graph.glsl" 2>/dev/null
-    sed -i -E 's|^#define BASE_COLOR .*|#define BASE_COLOR @fg:vec4(0.133, 0.133, 0.133, 1)|' "$gd/wave.glsl" 2>/dev/null
+    for gf in bars radial graph; do
+      [[ -f $gd/$gf.glsl ]] || continue
+      grep -q '^#define COLOR .*[^\\]$' "$gd/$gf.glsl" || continue
+      grep -q '^#define GRADIENT' "$gd/$gf.glsl" || continue
+      expr='d'; [[ $gf == graph ]] && expr='pos'
+      cp --update=none "$gd/$gf.glsl" "$gd/$gf.glsl.orig"
+      sed -i -E "s|^#define COLOR .*|#define COLOR mix(#222222, #3c3c3c, clamp($expr / GRADIENT, 0, 1))|" "$gd/$gf.glsl"
+    done
     touch "$gd/.bluelight-dark"
   fi
   cat > "$h/.local/bin/glava-start" <<'GLV'
@@ -1868,7 +1935,8 @@ phase2() {
   fi
 
   need_aur && aur_build
-  [[ $I_DE == gnome ]] && install_tela
+  [[ $I_DE == gnome ]] && install_gnome_look
+  [[ $I_DE == kde   ]] && install_kde_look
   [[ $I_DE == gnome ]] && gnome_setup "$pic_dir"
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
   [[ $I_DE != none ]] && glava_setup
