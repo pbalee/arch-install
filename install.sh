@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.23)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.24)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.23"
+SCRIPT_VERSION="v3.24"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -755,6 +755,7 @@ write_chroot_script() {
 #!/usr/bin/env bash
 set -u
 source /root/install.env
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60   # 60 mp-nél tovább tartó leállt letöltés megszakad
 has() { grep -qx "$1" <<<"$I_EXTRAS"; }
 need_aur() { has aur || has rustdesk || has glava || has brave || has video || has gaming || has devtools; }
 case ${I_DARK:-none} in
@@ -1049,7 +1050,7 @@ EOF
 # aur_install <csomag...>: ideiglenes építő felhasználóval AUR-csomagok fordítása és telepítése
 aur_install() {
   (( $# )) || return 0
-  local pkg
+  local pkg AURENV='export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60;'
   say "AUR csomagok: $*"
   # Az ideiglenes építő felhasználó home-ja nem a /home alatt van (meglévő /home védelme)
   useradd -m -d /var/tmp/builder -s /bin/bash builder
@@ -1060,17 +1061,17 @@ aur_install() {
   chown builder:builder /var/tmp/builder/.makepkg.conf
   # yay: az AUR-függőségeket (pl. a ProtonUp-Qt python-moduljait) is automatikusan feloldja
   if ! command -v yay >/dev/null 2>&1; then
-    runuser -l builder -c "rm -rf /tmp/yay-bin && cd /tmp && git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm" \
+    runuser -l builder -c "$AURENV rm -rf /tmp/yay-bin && cd /tmp && timeout 180 git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm" \
       || warn "A yay telepítése nem sikerült."
   fi
   for pkg in "$@"; do
     say "AUR: $pkg"
     if command -v yay >/dev/null 2>&1; then
-      runuser -l builder -c "yay -S --noconfirm --needed --answerdiff None --answerclean None --removemake $pkg" \
-        || runuser -l builder -c "yay -S --noconfirm --needed --answerdiff None --answerclean None --removemake $pkg" \
+      runuser -l builder -c "$AURENV timeout 5400 yay -S --noconfirm --needed --answerdiff None --answerclean None --answeredit None --answerupgrade None --removemake $pkg" \
+        || runuser -l builder -c "$AURENV timeout 5400 yay -S --noconfirm --needed --answerdiff None --answerclean None --answeredit None --answerupgrade None --removemake $pkg" \
         || warn "AUR-csomag nem települt: $pkg"
     else
-      runuser -l builder -c "rm -rf /tmp/$pkg && cd /tmp && git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "AUR-csomag nem települt: $pkg"
+      runuser -l builder -c "$AURENV rm -rf /tmp/$pkg && cd /tmp && timeout 180 git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "AUR-csomag nem települt: $pkg"
     fi
   done
   userdel -r builder 2>/dev/null
@@ -1179,10 +1180,11 @@ godot_android_setup() {
   say "Godot: Android SDK / Java beállítás"
   printf 'export ANDROID_HOME=%s\nexport ANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" > /etc/profile.d/android-sdk.sh
   if [[ -x $sm ]]; then
-    yes | JAVA_HOME=$jdk "$sm" --sdk_root="$sdk" --licenses >/dev/null 2>&1
-    JAVA_HOME=$jdk "$sm" --sdk_root="$sdk" "platforms;android-35" "build-tools;35.0.1" "build-tools;34.0.0" \
-        "cmake;3.10.2.4988404" "ndk;28.1.13356709" "platform-tools" >/dev/null 2>&1 \
-      || warn "Az Android SDK-csomagok egy része nem települt (sdkmanager)."
+    yes | JAVA_HOME=$jdk timeout 300 "$sm" --sdk_root="$sdk" --licenses >/dev/null 2>&1
+    echo "  (Android SDK-csomagok letöltése – az NDK nagy, percekig tarthat)"
+    JAVA_HOME=$jdk timeout 3600 "$sm" --sdk_root="$sdk" "platforms;android-35" "build-tools;35.0.1" "build-tools;34.0.0" \
+        "cmake;3.10.2.4988404" "ndk;28.1.13356709" "platform-tools" 2>&1 | tr '\r' '\n' | awk '!/^\[=/ || NR%20==0'
+    (( PIPESTATUS[0] == 0 )) || warn "Az Android SDK-csomagok egy része nem települt (sdkmanager)."
   else
     warn "Az sdkmanager nem található – az Android SDK-csomagokat kézzel kell telepíteni."
   fi
@@ -1222,8 +1224,8 @@ install_terep2() {
   say "Terep2"
   tmp=$(mktemp -d)
   if pacman -S --needed --noconfirm python-pip >/dev/null 2>&1 \
-     && python -m venv "$tmp/venv" && "$tmp/venv/bin/pip" -q install gdown >/dev/null 2>&1 \
-     && "$tmp/venv/bin/gdown" --folder "https://drive.google.com/drive/folders/$gid" -O "$tmp/gd" >/dev/null 2>&1; then
+     && python -m venv "$tmp/venv" && timeout 300 "$tmp/venv/bin/pip" -q install gdown >/dev/null 2>&1 \
+     && timeout 900 "$tmp/venv/bin/gdown" --folder "https://drive.google.com/drive/folders/$gid" -O "$tmp/gd" >/dev/null 2>&1; then
     bin=$(find "$tmp/gd" -type f -name '*.x86_64' | head -n1)
     if [[ -n $bin ]]; then
       mkdir -p /opt/terep2
