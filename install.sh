@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.24)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.25)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.24"
+SCRIPT_VERSION="v3.25"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -294,6 +294,7 @@ ask_software() {
       brave       "Brave böngésző (AUR)"                              on \
       solidcraft  "SolidCraft CAD (GitHub release AppImage)"         on \
       profile     "XFCE profil visszatöltése GitHubról"               "$on_xfce" \
+      wxscreensaver "wxscreensaver (Wayland képernyőkímélő, saját GitHub)" off \
       terep2      "Terep2 (Godot, Linux – Google Drive-ról)" off \
       drives      "Extra meghajtók fstab-ba (/Games, /Download)"      off) || cancel
   # XFCE-specifikus tételek: más asztali környezetnél nem települnek (XScreenSaver, XFCE-profil)
@@ -613,7 +614,7 @@ build_package_list() {
         bash-completion man-db man-pages pacman-contrib reflector
         htop glances duf inxi lsb-release mc unzip unrar 7zip
         udisks2 gvfs gvfs-afc gvfs-dnssd gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb gvfs-wsdd
-        gnome-disk-utility bluez bluez-utils blueberry
+        gnome-disk-utility bluez bluez-utils blueberry yad
         pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol
         noto-fonts noto-fonts-emoji ttf-dejavu ttf-liberation
         firefox firefox-i18n-hu keepassxc qbittorrent audacious okular fastfetch accountsservice
@@ -751,6 +752,369 @@ write_chroot_script() {
   } > /mnt/root/install.env
   chmod 600 /mnt/root/install.env
 
+  # Közös függvénykönyvtár és a bluelight-apps (utólagos telepítő/eltávolító) a célrendszerbe
+  mkdir -p /mnt/usr/local/lib/bluelight /mnt/usr/local/bin /mnt/usr/share/applications
+  cat > /mnt/usr/local/lib/bluelight/lib.sh <<'BLLIB'
+#!/usr/bin/env bash
+# Bluelight közös függvények: a telepítő (chroot) és a bluelight-apps is ezt használja.
+# A hívó definiálja: say(), warn(), has(); és az I_USER változót (a cél felhasználó).
+: "${I_GH_USER:=pbalee}"
+: "${I_SC_URL:=https://github.com/bherbruck/solidcraft/releases/latest/download}"
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60
+
+# Ideiglenes építő felhasználó az AUR-hoz (home-ja nem a /home alatt van, a meglévő /home védelme miatt)
+builder_up() {
+  if id builder >/dev/null 2>&1; then BUILDER_PRE=1; return 0; fi
+  BUILDER_PRE=0
+  useradd -m -d /var/tmp/builder -s /bin/bash builder
+  echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-builder
+  chmod 440 /etc/sudoers.d/99-builder
+  # Nincs -debug csomag és forrásmásolás a hibakereséshez (felesleges, és nagy csomagoknál percekig tart)
+  printf 'OPTIONS=("${OPTIONS[@]/#debug/!debug}")\n' > /var/tmp/builder/.makepkg.conf
+  chown builder:builder /var/tmp/builder/.makepkg.conf
+}
+builder_down() {
+  [[ ${BUILDER_PRE:-0} == 1 ]] && return 0
+  userdel -r builder 2>/dev/null
+  rm -f /etc/sudoers.d/99-builder
+}
+
+# aur_install <csomag...>: ideiglenes építő felhasználóval AUR-csomagok fordítása és telepítése
+aur_install() {
+  (( $# )) || return 0
+  local pkg AURENV='export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60;'
+  say "AUR csomagok: $*"
+  builder_up
+  # yay: az AUR-függőségeket (pl. a ProtonUp-Qt python-moduljait) is automatikusan feloldja
+  if ! command -v yay >/dev/null 2>&1; then
+    runuser -l builder -c "$AURENV rm -rf /tmp/yay-bin && cd /tmp && timeout 180 git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm" \
+      || warn "A yay telepítése nem sikerült."
+  fi
+  for pkg in "$@"; do
+    say "AUR: $pkg"
+    if command -v yay >/dev/null 2>&1; then
+      runuser -l builder -c "$AURENV timeout 5400 yay -S --noconfirm --needed --answerdiff None --answerclean None --answeredit None --answerupgrade None --removemake $pkg" \
+        || runuser -l builder -c "$AURENV timeout 5400 yay -S --noconfirm --needed --answerdiff None --answerclean None --answeredit None --answerupgrade None --removemake $pkg" \
+        || warn "AUR-csomag nem települt: $pkg"
+    else
+      runuser -l builder -c "$AURENV rm -rf /tmp/$pkg && cd /tmp && timeout 180 git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "AUR-csomag nem települt: $pkg"
+    fi
+  done
+  builder_down
+}
+
+# wxscreensaver: a saját GitHub-tárolóból, makepkg-gal (PKGBUILD)
+install_wxscreensaver() {
+  local AURENV='export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60;'
+  say "wxscreensaver (GitHub, makepkg)"
+  # GNOME-on kívül a swayidle kell az inaktivitás-figyeléshez
+  pacman -Q gnome-shell >/dev/null 2>&1 || pacman -S --needed --noconfirm swayidle >/dev/null 2>&1
+  builder_up
+  runuser -l builder -c "$AURENV rm -rf /tmp/wxscreensaver && cd /tmp && timeout 180 git clone --depth 1 https://github.com/${I_GH_USER}/wxscreensaver.git && cd wxscreensaver && makepkg -si --noconfirm" \
+    || warn "A wxscreensaver telepítése nem sikerült."
+  builder_down
+}
+
+# Godot Android-exporthoz: SDK-csomagok (platform, build-tools, NDK, CMake), licencek, debug keystore, szerkesztő-beállítások
+godot_android_setup() {
+  local h="/home/$I_USER" jdk=/usr/lib/jvm/java-17-openjdk sdk=/opt/android-sdk sm v f ks
+  sm=$sdk/cmdline-tools/latest/bin/sdkmanager
+  has devtools || return 0
+  say "Godot: Android SDK / Java beállítás"
+  printf 'export ANDROID_HOME=%s\nexport ANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" > /etc/profile.d/android-sdk.sh
+  if [[ -x $sm ]]; then
+    yes | JAVA_HOME=$jdk timeout 300 "$sm" --sdk_root="$sdk" --licenses >/dev/null 2>&1
+    echo "  (Android SDK-csomagok letöltése – az NDK nagy, percekig tarthat)"
+    JAVA_HOME=$jdk timeout 3600 "$sm" --sdk_root="$sdk" "platforms;android-35" "build-tools;35.0.1" "build-tools;34.0.0" \
+        "cmake;3.10.2.4988404" "ndk;28.1.13356709" "platform-tools" 2>&1 | tr '\r' '\n' | awk '!/^\[=/ || NR%20==0'
+    (( PIPESTATUS[0] == 0 )) || warn "Az Android SDK-csomagok egy része nem települt (sdkmanager)."
+  else
+    warn "Az sdkmanager nem található – az Android SDK-csomagokat kézzel kell telepíteni."
+  fi
+  if getent group sdkusers >/dev/null; then
+    chgrp -R sdkusers "$sdk" 2>/dev/null; chmod -R g+w "$sdk" 2>/dev/null
+    usermod -aG sdkusers "$I_USER" 2>/dev/null
+  fi
+  ks="$h/.local/share/godot/keystores/debug.keystore"
+  if [[ ! -e $ks ]]; then
+    runuser -l "$I_USER" -c "mkdir -p ~/.local/share/godot/keystores && $jdk/bin/keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore '$ks' -storepass android -dname 'CN=Android Debug,O=Android,C=US' -validity 9999 -deststoretype pkcs12" >/dev/null 2>&1 \
+      || warn "A Godot debug keystore létrehozása nem sikerült."
+  fi
+  mkdir -p "$h/.config/godot"
+  for v in 4 4.3 4.4 4.5 4.6; do
+    f="$h/.config/godot/editor_settings-$v.tres"
+    [[ -e $f ]] && continue
+    cat > "$f" <<GEOF
+[gd_resource type="EditorSettings" format=3]
+
+[resource]
+export/android/java_sdk_path = "$jdk"
+export/android/android_sdk_path = "$sdk"
+export/android/debug_keystore = "$ks"
+export/android/debug_keystore_user = "androiddebugkey"
+export/android/debug_keystore_pass = "android"
+GEOF
+  done
+  chown -R "$I_USER:$I_USER" "$h/.config/godot" "$h/.local/share/godot" 2>/dev/null
+  return 0
+}
+
+# Terep2 (Godot, Linux): a Google Drive-ról -> /opt/terep2. Ha a letöltött mappában nincsenek meg az eredeti
+# adatfájlok (.PCX), azokat a GitHub-repóból pótolja (a Godot-változat az exe mellől olvassa őket).
+install_terep2() {
+  local gid=11q6sYZ39WIHwkniY0DPoelaIKVqbR13L tmp bin
+  local url="https://github.com/${I_GH_USER}/Terep2/archive/refs/heads/main.tar.gz"
+  say "Terep2"
+  tmp=$(mktemp -d)
+  if pacman -S --needed --noconfirm python-pip >/dev/null 2>&1 \
+     && python -m venv "$tmp/venv" && timeout 300 "$tmp/venv/bin/pip" -q install gdown >/dev/null 2>&1 \
+     && timeout 900 "$tmp/venv/bin/gdown" --folder "https://drive.google.com/drive/folders/$gid" -O "$tmp/gd" >/dev/null 2>&1; then
+    bin=$(find "$tmp/gd" -type f -name '*.x86_64' | head -n1)
+    if [[ -n $bin ]]; then
+      mkdir -p /opt/terep2
+      cp -rf "$(dirname "$bin")/." /opt/terep2/
+      bin=/opt/terep2/$(basename "$bin")
+      chmod +x "$bin" /opt/terep2/*.sh 2>/dev/null
+      if [[ -z $(find /opt/terep2 -maxdepth 1 -iname '*.pcx' | head -n1) ]] \
+         && curl -fsSL -o "$tmp/t.tgz" "$url"; then
+        tar -xzf "$tmp/t.tgz" -C /opt/terep2 --strip-components=2 --skip-old-files --wildcards '*/terep2/*' \
+          || warn "Az eredeti Terep2 adatfájlok pótlása nem sikerült."
+      fi
+      cat > /usr/share/applications/terep2.desktop <<TEOF
+[Desktop Entry]
+Type=Application
+Name=Terep2
+Comment=Terepjáró
+Exec=sh -c 'cd /opt/terep2 && exec "$bin"'
+Icon=applications-games
+Terminal=false
+Categories=Game;
+TEOF
+      say "Terep2 (Godot, Linux) telepítve"
+    else
+      warn "A Drive-mappában nincs .x86_64 fájl."
+    fi
+  else
+    warn "A Terep2 nem tölthető le a Google Drive-ról (megosztás: 'bárki, akinek megvan a link')."
+  fi
+  chmod -R a+rX /opt/terep2 2>/dev/null
+  rm -rf "$tmp"
+}
+
+# SolidCraft: GitHub release AppImage, SHA256 ellenőrzéssel
+install_solidcraft() {
+  local base=$I_SC_URL app=/opt/solidcraft/solidcraft.AppImage sums=/tmp/solidcraft.sums h
+  say "SolidCraft telepítése (AppImage)"
+  mkdir -p /opt/solidcraft
+  if ! curl -fsSL -o "$app" "$base/solidcraft-linux-x86_64.AppImage"; then
+    warn "A SolidCraft letöltése nem sikerült."; rm -f "$app"; return 0
+  fi
+  if curl -fsSL -o "$sums" "$base/SHA256SUMS.txt"; then
+    h=$(sha256sum "$app" | cut -d' ' -f1)
+    if ! grep -q "$h" "$sums"; then
+      warn "A SolidCraft ellenőrzőösszege NEM egyezik, nem telepítem."; rm -f "$app" "$sums"; return 0
+    fi
+  else
+    warn "Az ellenőrzőösszeg-fájl nem érhető el, ellenőrzés nélkül telepítem."
+  fi
+  rm -f "$sums"
+  chmod 755 "$app"
+  ln -sf "$app" /usr/local/bin/solidcraft
+  cat > /usr/share/applications/solidcraft.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=SolidCraft
+Comment=Parametrikus 3D CAD
+Exec=$app %F
+Icon=applications-engineering
+Terminal=false
+Categories=Graphics;Engineering;
+EOF
+}
+BLLIB
+  cat > /mnt/usr/local/bin/bluelight-apps <<'BLAPPS'
+#!/usr/bin/env bash
+# bluelight-apps – alkalmazások utólagos telepítése és eltávolítása pipálós listával
+#   bluelight-apps                grafikus (yad) vagy terminálos (dialog) lista
+#   bluelight-apps --list         az elemek és állapotuk kiírása
+#   bluelight-apps --apply --user NÉV --install "id id" --remove "id id"   (root; ezt hívja a program)
+set -u
+LIB=/usr/local/lib/bluelight/lib.sh
+[[ -r $LIB ]] || { echo "Hiányzik: $LIB" >&2; exit 1; }
+
+SELECTED=""
+has()  { grep -qwx "$1" <<<"$SELECTED"; }
+say()  { printf '\n\e[1;36m  -> %s\e[0m\n' "$*"; }
+warn() { printf '\e[1;33m  [!] %s\e[0m\n' "$*"; }
+DRY=${BLUELIGHT_DRY:-0}
+run()  { if [[ $DRY == 1 ]]; then echo "DRY: $*"; else "$@"; fi; }
+I_USER=${SUDO_USER:-${USER:-root}}
+# shellcheck disable=SC1090
+source "$LIB"
+
+# Elemek (a megjelenítés sorrendje)
+IDS=(libreoffice gaming vbox chrome brave rustdesk media video freecad solidcraft devtools ollama flatpak wxscreensaver terep2)
+
+# def <id>  ->  LABEL, PAC (pacman), AUR (AUR), CHECK (csomagnév vagy /útvonal), POST (telepítés után), UNPOST (eltávolítás előtt)
+def() {
+  LABEL=""; PAC=(); AUR=(); CHECK=""; POST=""; UNPOST=""
+  case $1 in
+    libreoffice) LABEL="LibreOffice (magyar nyelvi csomagokkal)"
+      PAC=(libreoffice-fresh libreoffice-fresh-hu); CHECK=libreoffice-fresh ;;
+    gaming) LABEL="Játék: Steam, Lutris, Wine, GameMode, DOSBox, ProtonUp-Qt"
+      PAC=(steam lutris gamemode lib32-gamemode gamescope mangohud wine wine-gecko wine-mono
+           lib32-freetype2 lib32-gnutls lib32-libglvnd lib32-vulkan-icd-loader dosbox)
+      AUR=(python-inputs python-steam protonup-qt); CHECK=steam ;;
+    vbox) LABEL="VirtualBox (host + dkms)"
+      PAC=(linux-headers virtualbox virtualbox-host-dkms); CHECK=virtualbox; POST=post_vbox ;;
+    chrome) LABEL="Google Chrome (AUR)"; AUR=(google-chrome); CHECK=google-chrome ;;
+    brave) LABEL="Brave böngésző (AUR)"; AUR=(brave-bin); CHECK=brave-bin ;;
+    rustdesk) LABEL="RustDesk távoli asztal (AUR) + szolgáltatás"
+      AUR=(rustdesk-bin); CHECK=rustdesk-bin; POST=post_rustdesk; UNPOST=unpost_rustdesk ;;
+    media) LABEL="Média: yt-dlp, ffmpeg, GStreamer kodekek, Drawing"
+      PAC=(yt-dlp ffmpeg gst-libav gst-plugins-bad gst-plugins-ugly gst-thumbnailers drawing); CHECK=drawing ;;
+    video) LABEL="Videó: Kdenlive, Shotcut, OBS, LosslessCut, Screenkey"
+      PAC=(kdenlive shotcut obs-studio screenkey); AUR=(losslesscut-bin); CHECK=kdenlive ;;
+    freecad) LABEL="CAD: FreeCAD + QCAD"; PAC=(freecad qcad); CHECK=freecad ;;
+    solidcraft) LABEL="SolidCraft CAD (GitHub AppImage)"
+      PAC=(fuse2 fuse3); CHECK=/opt/solidcraft/solidcraft.AppImage; POST=install_solidcraft; UNPOST=unpost_solidcraft ;;
+    devtools) LABEL="Fejlesztés: Godot (+Mono), JDK 17, Android SDK/NDK + adb"
+      PAC=(godot godot-mono jdk17-openjdk android-tools)
+      AUR=(android-sdk android-sdk-platform-tools android-sdk-build-tools android-sdk-cmdline-tools-latest)
+      CHECK=godot; POST=godot_android_setup; UNPOST=unpost_devtools ;;
+    ollama) LABEL="Ollama (helyi AI; NVIDIA-nál CUDA – nagy letöltés)"
+      PAC=(ollama); pacman -Q nvidia-utils >/dev/null 2>&1 && PAC+=(ollama-cuda); CHECK=ollama ;;
+    flatpak) LABEL="Flatpak + Flathub"; PAC=(flatpak); CHECK=flatpak; POST=post_flatpak ;;
+    wxscreensaver) LABEL="wxscreensaver (Wayland képernyőkímélő, saját GitHub)"
+      CHECK=wxscreensaver; POST=install_wxscreensaver ;;
+    terep2) LABEL="Terep2 (Godot, Linux – Google Drive-ról)"
+      CHECK=/opt/terep2; POST=install_terep2; UNPOST=unpost_terep2 ;;
+    *) return 1 ;;
+  esac
+}
+
+post_vbox()      { run gpasswd -a "$I_USER" vboxusers; say "VirtualBox: a vboxusers csoport csak újra bejelentkezés után él."; }
+post_rustdesk()  { run systemctl enable --now rustdesk || warn "A rustdesk szolgáltatás indítása nem sikerült."; }
+unpost_rustdesk(){ run systemctl disable --now rustdesk 2>/dev/null; }
+post_flatpak()   { run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo; }
+unpost_solidcraft() { run rm -rf /opt/solidcraft /usr/local/bin/solidcraft /usr/share/applications/solidcraft.desktop; }
+unpost_terep2()  { run rm -rf /opt/terep2 /usr/share/applications/terep2.desktop; }
+unpost_devtools(){ run rm -f /etc/profile.d/android-sdk.sh; }
+
+is_installed() {
+  def "$1" || return 1
+  if [[ $CHECK == /* ]]; then [[ -e $CHECK ]]; else pacman -Qq "$CHECK" >/dev/null 2>&1; fi
+}
+
+# ---------- gyökér-munkamenet: telepítés / eltávolítás ----------
+apply() {
+  local id p inst=() rem=() keep='linux-headers ffmpeg dosfstools'
+  SELECTED="$INSTALL"          # a lib has() függvénye ezt nézi (pl. devtools)
+  for id in $INSTALL; do
+    def "$id" || continue
+    say "Telepítés: $LABEL"
+    (( ${#PAC[@]} )) && { run pacman -S --needed --noconfirm "${PAC[@]}" || warn "Nem települt minden csomag: $LABEL"; }
+    (( ${#AUR[@]} )) && run aur_install "${AUR[@]}"
+    [[ -n $POST ]] && "$POST"
+  done
+  for id in $REMOVE; do
+    def "$id" || continue
+    say "Eltávolítás: $LABEL"
+    [[ -n $UNPOST ]] && "$UNPOST"
+    rem=()
+    for p in "${AUR[@]}" "${PAC[@]}"; do
+      [[ " $keep " == *" $p "* ]] && continue
+      pacman -Qq "$p" >/dev/null 2>&1 && rem+=("$p")
+    done
+    # wxscreensaver: csomagként települt
+    [[ $id == wxscreensaver ]] && pacman -Qq wxscreensaver >/dev/null 2>&1 && rem+=(wxscreensaver)
+    if (( ${#rem[@]} )); then
+      run pacman -Rns --noconfirm "${rem[@]}" 2>/dev/null || {
+        for p in "${rem[@]}"; do run pacman -Rns --noconfirm "$p" >/dev/null 2>&1 || warn "Nem távolítható el (más csomag igényli): $p"; done; }
+    fi
+    [[ $id == devtools ]] && run rm -rf /opt/android-sdk
+  done
+  say "Kész."
+}
+
+# ---------- felhasználói felület ----------
+ui_checklist() {   # stdout: kijelölt azonosítók; a kilépési kód nem 0, ha mégse
+  local id rows=() out
+  if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v yad >/dev/null; then
+    for id in "${IDS[@]}"; do
+      def "$id"
+      is_installed "$id" && rows+=(TRUE "$id" "$LABEL") || rows+=(FALSE "$id" "$LABEL")
+    done
+    out=$(yad --title="Bluelight alkalmazások" --width=640 --height=560 --center \
+          --text="Pipáld be, amit telepítenél, és vedd ki a pipát, amit eltávolítanál." \
+          --list --checklist --column=" " --column="ID" --column="Alkalmazás" \
+          --hide-column=2 --print-column=2 --separator=' ' \
+          --button="Mégse:1" --button="Alkalmaz:0" "${rows[@]}") || return 1
+    tr -c 'a-z0-9\n' ' ' <<<"$out"
+  else
+    for id in "${IDS[@]}"; do
+      def "$id"
+      is_installed "$id" && rows+=("$id" "$LABEL" on) || rows+=("$id" "$LABEL" off)
+    done
+    out=$(dialog --stdout --separate-output --title "Bluelight alkalmazások" \
+          --checklist "Szóköz = kijelölés (telepítés / eltávolítás), Enter = alkalmaz" 0 0 0 "${rows[@]}") || return 1
+    tr '\n' ' ' <<<"$out"
+  fi
+}
+
+main_ui() {
+  local sel id want_inst=() want_rem=() msg
+  sel=$(ui_checklist) || exit 0
+  for id in "${IDS[@]}"; do
+    if grep -qw "$id" <<<"$sel"; then is_installed "$id" || want_inst+=("$id")
+    else is_installed "$id" && want_rem+=("$id"); fi
+  done
+  if (( ! ${#want_inst[@]} && ! ${#want_rem[@]} )); then
+    msg="Nincs változtatás."
+    if command -v yad >/dev/null && [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then yad --info --text="$msg" --button=OK:0; else echo "$msg"; fi
+    exit 0
+  fi
+  msg="Telepítés: ${want_inst[*]:-—}\nEltávolítás: ${want_rem[*]:-—}\n\nFolytassuk?"
+  if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v yad >/dev/null; then
+    yad --question --title="Megerősítés" --text="$msg" --button="Mégse:1" --button="Igen:0" || exit 0
+    # a folyamat kimenete egy görgethető ablakban
+    pkexec /usr/local/bin/bluelight-apps --apply --user "$USER" --install "${want_inst[*]}" --remove "${want_rem[*]}" 2>&1 \
+      | sed 's/\x1b\[[0-9;]*m//g' \
+      | yad --text-info --tail --title="Bluelight alkalmazások – folyamatban" --width=760 --height=480 --button="Bezár:0"
+  else
+    dialog --yesno "$(printf "$msg")" 12 60 || exit 0
+    clear
+    sudo /usr/local/bin/bluelight-apps --apply --user "$USER" --install "${want_inst[*]}" --remove "${want_rem[*]}"
+    read -rp "Enter a kilépéshez..." _
+  fi
+}
+
+case ${1:-} in
+  --list)
+    for id in "${IDS[@]}"; do def "$id"; printf '%-14s %-10s %s\n' "$id" "$(is_installed "$id" && echo telepítve || echo -)" "$LABEL"; done ;;
+  --apply)
+    shift; INSTALL=""; REMOVE=""
+    while (( $# )); do
+      case $1 in --user) I_USER=$2; shift ;; --install) INSTALL=$2; shift ;; --remove) REMOVE=$2; shift ;; esac
+      shift
+    done
+    export I_USER
+    (( EUID == 0 )) || { echo "Root jog kell (pkexec/sudo)." >&2; exit 1; }
+    apply ;;
+  *) main_ui ;;
+esac
+BLAPPS
+  chmod 755 /mnt/usr/local/bin/bluelight-apps
+  cat > /mnt/usr/share/applications/bluelight-apps.desktop <<'BLDESK'
+[Desktop Entry]
+Type=Application
+Name=Bluelight alkalmazások
+Comment=Alkalmazások telepítése és eltávolítása (pipálós lista)
+Exec=bluelight-apps
+Icon=system-software-install
+Categories=System;Settings;PackageManager;
+BLDESK
+
   cat > /mnt/root/chroot-setup.sh <<'CHROOT'
 #!/usr/bin/env bash
 set -u
@@ -766,6 +1130,8 @@ esac
 ICON_THEME=Papirus-Dark
 say()  { printf '\n\e[1;36m  -> %s\e[0m\n' "$*"; }
 warn() { printf '\e[1;33m  [!] %s\e[0m\n' "$*"; printf '%s\n' "$*" >> /var/log/arch-install-warnings.txt; }
+export I_USER
+source /usr/local/lib/bluelight/lib.sh
 
 ALIASES=$(cat <<'ALIASBLOCK'
 # --- pbalee aliasok ---
@@ -1047,36 +1413,6 @@ EOF
   grep -q 'menuentry' "$grub_dir/grub.cfg" || { warn "A grub.cfg-ben nincs menüpont!"; return 1; }
 }
 
-# aur_install <csomag...>: ideiglenes építő felhasználóval AUR-csomagok fordítása és telepítése
-aur_install() {
-  (( $# )) || return 0
-  local pkg AURENV='export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60;'
-  say "AUR csomagok: $*"
-  # Az ideiglenes építő felhasználó home-ja nem a /home alatt van (meglévő /home védelme)
-  useradd -m -d /var/tmp/builder -s /bin/bash builder
-  echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-builder
-  chmod 440 /etc/sudoers.d/99-builder
-  # Nincs -debug csomag és forrásmásolás a hibakereséshez (felesleges, és nagy csomagoknál percekig tart)
-  printf 'OPTIONS=("${OPTIONS[@]/#debug/!debug}")\n' > /var/tmp/builder/.makepkg.conf
-  chown builder:builder /var/tmp/builder/.makepkg.conf
-  # yay: az AUR-függőségeket (pl. a ProtonUp-Qt python-moduljait) is automatikusan feloldja
-  if ! command -v yay >/dev/null 2>&1; then
-    runuser -l builder -c "$AURENV rm -rf /tmp/yay-bin && cd /tmp && timeout 180 git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm" \
-      || warn "A yay telepítése nem sikerült."
-  fi
-  for pkg in "$@"; do
-    say "AUR: $pkg"
-    if command -v yay >/dev/null 2>&1; then
-      runuser -l builder -c "$AURENV timeout 5400 yay -S --noconfirm --needed --answerdiff None --answerclean None --answeredit None --answerupgrade None --removemake $pkg" \
-        || runuser -l builder -c "$AURENV timeout 5400 yay -S --noconfirm --needed --answerdiff None --answerclean None --answeredit None --answerupgrade None --removemake $pkg" \
-        || warn "AUR-csomag nem települt: $pkg"
-    else
-      runuser -l builder -c "$AURENV rm -rf /tmp/$pkg && cd /tmp && timeout 180 git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si --noconfirm" || warn "AUR-csomag nem települt: $pkg"
-    fi
-  done
-  userdel -r builder 2>/dev/null
-  rm -f /etc/sudoers.d/99-builder
-}
 
 aur_build() {
   local pkgs=()
@@ -1172,91 +1508,7 @@ install_tela() {
   rm -rf "$tmp"
 }
 
-# Godot Android-exporthoz: SDK-csomagok (platform, build-tools, NDK, CMake), licencek, debug keystore, szerkesztő-beállítások
-godot_android_setup() {
-  local h="/home/$I_USER" jdk=/usr/lib/jvm/java-17-openjdk sdk=/opt/android-sdk sm v f ks
-  sm=$sdk/cmdline-tools/latest/bin/sdkmanager
-  has devtools || return 0
-  say "Godot: Android SDK / Java beállítás"
-  printf 'export ANDROID_HOME=%s\nexport ANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" > /etc/profile.d/android-sdk.sh
-  if [[ -x $sm ]]; then
-    yes | JAVA_HOME=$jdk timeout 300 "$sm" --sdk_root="$sdk" --licenses >/dev/null 2>&1
-    echo "  (Android SDK-csomagok letöltése – az NDK nagy, percekig tarthat)"
-    JAVA_HOME=$jdk timeout 3600 "$sm" --sdk_root="$sdk" "platforms;android-35" "build-tools;35.0.1" "build-tools;34.0.0" \
-        "cmake;3.10.2.4988404" "ndk;28.1.13356709" "platform-tools" 2>&1 | tr '\r' '\n' | awk '!/^\[=/ || NR%20==0'
-    (( PIPESTATUS[0] == 0 )) || warn "Az Android SDK-csomagok egy része nem települt (sdkmanager)."
-  else
-    warn "Az sdkmanager nem található – az Android SDK-csomagokat kézzel kell telepíteni."
-  fi
-  if getent group sdkusers >/dev/null; then
-    chgrp -R sdkusers "$sdk" 2>/dev/null; chmod -R g+w "$sdk" 2>/dev/null
-    usermod -aG sdkusers "$I_USER" 2>/dev/null
-  fi
-  ks="$h/.local/share/godot/keystores/debug.keystore"
-  if [[ ! -e $ks ]]; then
-    runuser -l "$I_USER" -c "mkdir -p ~/.local/share/godot/keystores && $jdk/bin/keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore '$ks' -storepass android -dname 'CN=Android Debug,O=Android,C=US' -validity 9999 -deststoretype pkcs12" >/dev/null 2>&1 \
-      || warn "A Godot debug keystore létrehozása nem sikerült."
-  fi
-  mkdir -p "$h/.config/godot"
-  for v in 4 4.3 4.4 4.5 4.6; do
-    f="$h/.config/godot/editor_settings-$v.tres"
-    [[ -e $f ]] && continue
-    cat > "$f" <<GEOF
-[gd_resource type="EditorSettings" format=3]
 
-[resource]
-export/android/java_sdk_path = "$jdk"
-export/android/android_sdk_path = "$sdk"
-export/android/debug_keystore = "$ks"
-export/android/debug_keystore_user = "androiddebugkey"
-export/android/debug_keystore_pass = "android"
-GEOF
-  done
-  chown -R "$I_USER:$I_USER" "$h/.config/godot" "$h/.local/share/godot" 2>/dev/null
-  return 0
-}
-
-# Terep2 (Godot, Linux): a Google Drive-ról -> /opt/terep2. Ha a letöltött mappában nincsenek meg az eredeti
-# adatfájlok (.PCX), azokat a GitHub-repóból pótolja (a Godot-változat az exe mellől olvassa őket).
-install_terep2() {
-  local gid=11q6sYZ39WIHwkniY0DPoelaIKVqbR13L tmp bin
-  local url="https://github.com/${I_GH_USER}/Terep2/archive/refs/heads/main.tar.gz"
-  say "Terep2"
-  tmp=$(mktemp -d)
-  if pacman -S --needed --noconfirm python-pip >/dev/null 2>&1 \
-     && python -m venv "$tmp/venv" && timeout 300 "$tmp/venv/bin/pip" -q install gdown >/dev/null 2>&1 \
-     && timeout 900 "$tmp/venv/bin/gdown" --folder "https://drive.google.com/drive/folders/$gid" -O "$tmp/gd" >/dev/null 2>&1; then
-    bin=$(find "$tmp/gd" -type f -name '*.x86_64' | head -n1)
-    if [[ -n $bin ]]; then
-      mkdir -p /opt/terep2
-      cp -rf "$(dirname "$bin")/." /opt/terep2/
-      bin=/opt/terep2/$(basename "$bin")
-      chmod +x "$bin" /opt/terep2/*.sh 2>/dev/null
-      if [[ -z $(find /opt/terep2 -maxdepth 1 -iname '*.pcx' | head -n1) ]] \
-         && curl -fsSL -o "$tmp/t.tgz" "$url"; then
-        tar -xzf "$tmp/t.tgz" -C /opt/terep2 --strip-components=2 --skip-old-files --wildcards '*/terep2/*' \
-          || warn "Az eredeti Terep2 adatfájlok pótlása nem sikerült."
-      fi
-      cat > /usr/share/applications/terep2.desktop <<TEOF
-[Desktop Entry]
-Type=Application
-Name=Terep2
-Comment=Terepjáró
-Exec=sh -c 'cd /opt/terep2 && exec "$bin"'
-Icon=applications-games
-Terminal=false
-Categories=Game;
-TEOF
-      say "Terep2 (Godot, Linux) telepítve"
-    else
-      warn "A Drive-mappában nincs .x86_64 fájl."
-    fi
-  else
-    warn "A Terep2 nem tölthető le a Google Drive-ról (megosztás: 'bárki, akinek megvan a link')."
-  fi
-  chmod -R a+rX /opt/terep2 2>/dev/null
-  rm -rf "$tmp"
-}
 
 # git_ext <uuid> <git-url> [célmappa]: GNOME-bővítmény telepítése GitHubról (rendszerszinten)
 git_ext() {
@@ -1668,36 +1920,6 @@ audacious_skin() {
   rm -rf "$src" /tmp/repo-src.tar.gz
 }
 
-# SolidCraft: GitHub release AppImage, SHA256 ellenőrzéssel
-install_solidcraft() {
-  local base=$I_SC_URL app=/opt/solidcraft/solidcraft.AppImage sums=/tmp/solidcraft.sums h
-  say "SolidCraft telepítése (AppImage)"
-  mkdir -p /opt/solidcraft
-  if ! curl -fsSL -o "$app" "$base/solidcraft-linux-x86_64.AppImage"; then
-    warn "A SolidCraft letöltése nem sikerült."; rm -f "$app"; return 0
-  fi
-  if curl -fsSL -o "$sums" "$base/SHA256SUMS.txt"; then
-    h=$(sha256sum "$app" | cut -d' ' -f1)
-    if ! grep -q "$h" "$sums"; then
-      warn "A SolidCraft ellenőrzőösszege NEM egyezik, nem telepítem."; rm -f "$app" "$sums"; return 0
-    fi
-  else
-    warn "Az ellenőrzőösszeg-fájl nem érhető el, ellenőrzés nélkül telepítem."
-  fi
-  rm -f "$sums"
-  chmod 755 "$app"
-  ln -sf "$app" /usr/local/bin/solidcraft
-  cat > /usr/share/applications/solidcraft.desktop <<EOF
-[Desktop Entry]
-Type=Application
-Name=SolidCraft
-Comment=Parametrikus 3D CAD
-Exec=$app %F
-Icon=applications-engineering
-Terminal=false
-Categories=Graphics;Engineering;
-EOF
-}
 
 # GLava (hangvizualizáló): minden asztali környezetben; a ksuperkey csak XFCE-hez kell
 glava_setup() {
@@ -1946,6 +2168,7 @@ phase2() {
   godot_android_setup
   has terep2 && install_terep2
   has solidcraft && install_solidcraft
+  has wxscreensaver && install_wxscreensaver
   fix_home_owner
 }
 
