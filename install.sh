@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.25)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.26)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.25"
+SCRIPT_VERSION="v3.26"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -303,7 +303,7 @@ ask_software() {
   fi
 }
 has() { grep -qx "$1" <<<"$EXTRAS"; }
-need_aur() { has aur || has rustdesk || has glava || has brave || has video || has gaming || has devtools; }
+need_aur() { return 0; }   # a blueberry miatt mindig van AUR-lépés
 
 ask_disk() {
   MODE=$(menu "Lemezkezelés" "Hogyan állítsuk össze a partíciókat?" \
@@ -614,7 +614,7 @@ build_package_list() {
         bash-completion man-db man-pages pacman-contrib reflector
         htop glances duf inxi lsb-release mc unzip unrar 7zip
         udisks2 gvfs gvfs-afc gvfs-dnssd gvfs-gphoto2 gvfs-mtp gvfs-nfs gvfs-smb gvfs-wsdd
-        gnome-disk-utility bluez bluez-utils blueberry yad
+        gnome-disk-utility bluez bluez-utils yad
         pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber gst-plugin-pipewire pavucontrol
         noto-fonts noto-fonts-emoji ttf-dejavu ttf-liberation
         firefox firefox-i18n-hu keepassxc qbittorrent audacious okular fastfetch accountsservice
@@ -638,7 +638,7 @@ build_package_list() {
                   lightdm lightdm-gtk-greeter numlockx network-manager-applet) ;;
     gnome) PKGS+=(xorg-server gnome gdm
                   gnome-tweaks extension-manager dconf-editor gnome-browser-connector gnome-shell-extensions sassc ttf-jetbrains-mono ttf-fira-code
-                  gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock gnome-shell-extension-blur-my-shell
+                  gnome-shell-extension-appindicator
                   baobab decibels epiphany evolution loupe malcontent nautilus orca papers rygel
                   showtime simple-scan snapshot sushi tecla yelp
                   gnome-backgrounds gnome-calculator gnome-calendar gnome-characters gnome-clocks
@@ -837,8 +837,14 @@ godot_android_setup() {
   fi
   ks="$h/.local/share/godot/keystores/debug.keystore"
   if [[ ! -e $ks ]]; then
-    runuser -l "$I_USER" -c "mkdir -p ~/.local/share/godot/keystores && $jdk/bin/keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore '$ks' -storepass android -dname 'CN=Android Debug,O=Android,C=US' -validity 9999 -deststoretype pkcs12" >/dev/null 2>&1 \
-      || warn "A Godot debug keystore létrehozása nem sikerült."
+    mkdir -p "$(dirname "$ks")"
+    if "$jdk/bin/keytool" -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore "$ks" \
+         -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12 \
+         >>/var/log/arch-install-godot.log 2>&1; then
+      chown -R "$I_USER:$I_USER" "$h/.local/share/godot" 2>/dev/null
+    else
+      warn "A Godot debug keystore létrehozása nem sikerült (részletek: /var/log/arch-install-godot.log)."
+    fi
   fi
   mkdir -p "$h/.config/godot"
   for v in 4 4.3 4.4 4.5 4.6; do
@@ -1039,7 +1045,7 @@ apply() {
 
 # ---------- felhasználói felület ----------
 ui_checklist() {   # stdout: kijelölt azonosítók; a kilépési kód nem 0, ha mégse
-  local id rows=() out
+  local id rows=() out rc
   if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v yad >/dev/null; then
     for id in "${IDS[@]}"; do
       def "$id"
@@ -1048,9 +1054,11 @@ ui_checklist() {   # stdout: kijelölt azonosítók; a kilépési kód nem 0, ha
     out=$(yad --title="Bluelight alkalmazások" --width=640 --height=560 --center \
           --text="Pipáld be, amit telepítenél, és vedd ki a pipát, amit eltávolítanál." \
           --list --checklist --column=" " --column="ID" --column="Alkalmazás" \
-          --hide-column=2 --print-column=2 --separator=' ' \
-          --button="Mégse:1" --button="Alkalmaz:0" "${rows[@]}") || return 1
-    tr -c 'a-z0-9\n' ' ' <<<"$out"
+          --hide-column=2 --separator='|' \
+          --button="Mégse:1" --button="Alkalmaz:0" "${rows[@]}"); rc=$?
+    mkdir -p "$HOME/.cache"; printf 'yad rc=%s\n%s\n' "$rc" "$out" > "$HOME/.cache/bluelight-apps.log"
+    (( rc == 0 )) || return 1
+    awk -F'|' '$1=="TRUE"{print $2}' <<<"$out" | tr '\n' ' '
   else
     for id in "${IDS[@]}"; do
       def "$id"
@@ -1121,7 +1129,7 @@ set -u
 source /root/install.env
 export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60   # 60 mp-nél tovább tartó leállt letöltés megszakad
 has() { grep -qx "$1" <<<"$I_EXTRAS"; }
-need_aur() { has aur || has rustdesk || has glava || has brave || has video || has gaming || has devtools; }
+need_aur() { return 0; }   # a blueberry miatt mindig van AUR-lépés
 case ${I_DARK:-none} in
   arc)     GTK_THEME=Arc-Dark;      WM_THEME=Arc-Dark;      KV_THEME=KvArcDark ;;
   materia) GTK_THEME=Materia-dark;  WM_THEME=Materia-dark;  KV_THEME=MateriaDark ;;
@@ -1416,6 +1424,7 @@ EOF
 
 aur_build() {
   local pkgs=()
+  pkgs+=(blueberry)
   has aur      && pkgs+=(yay-bin google-chrome)
   has rustdesk && pkgs+=(rustdesk-bin)
   has glava    && pkgs+=(glava)
@@ -1789,7 +1798,7 @@ EOF
     fi
     fc-list 2>/dev/null | grep -qi oxanium && echo "font-name='Oxanium @wght=400 $ui_sz'"
     fc-list 2>/dev/null | grep -qi 'JetBrains Mono' && echo "document-font-name='JetBrains Mono Light @wght=300 $doc_sz'"
-    fc-list 2>/dev/null | grep -qi 'Fira Code' && echo "monospace-font-name='Fira Code @wght=400 $mono_sz'"
+    fc-list 2>/dev/null | grep -qi 'Fira Code' && echo "monospace-font-name='Fira Code @wght=700 $mono_sz'"
     if [[ -d /usr/share/themes/Win12X-Fantasy-Dark-Compact ]]; then
       printf "\n[org/gnome/shell/extensions/user-theme]\nname='Win12X-Fantasy-Dark-Compact'\n"
     fi
