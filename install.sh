@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.26)
+#  Arch Linux automata telepítő  –  BLUELIGHT INSTALLER   (pbalee, v3.27)
 #
 #  Indítás (Arch ISO-ról bootolva, működő hálózattal):
 #
 #     bash <(curl -fsSL https://raw.githubusercontent.com/pbalee/arch-install/main/install.sh)
 # =============================================================================
 set -uo pipefail
-SCRIPT_VERSION="v3.26"
+SCRIPT_VERSION="v3.27"
 SCRIPT_DATE="2026-11-14"
 
 ############################ BEÁLLÍTÁSOK – szabadon átírhatod ###################
@@ -1519,6 +1519,54 @@ install_tela() {
 
 
 
+# Firefox: Adblock Plus, uBlock Origin, Dark Reader (szabályzatfájl; az első indításkor települnek, letilthatók)
+firefox_addons() {
+  local d=/usr/lib/firefox/distribution
+  mkdir -p "$d"
+  cat > "$d/policies.json" <<'FFEOF'
+{
+  "policies": {
+    "ExtensionSettings": {
+      "uBlock0@raymondhill.net": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+      },
+      "addon@darkreader.org": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/darkreader/latest.xpi"
+      },
+      "adblockplus@adblockplus.org": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/adblock-plus/latest.xpi"
+      }
+    }
+  }
+}
+FFEOF
+}
+
+# qBittorrent alapbeállítások (új home-nál, vagy ha még nincs konfig): oldalsáv elrejtve, letöltés közben dupla kattintás =
+# célkönyvtár megnyitása, a .torrent fájl törlése a hozzáadás után (megszakított hozzáadásnál is)
+qbittorrent_setup() {
+  local f="/home/$I_USER/.config/qBittorrent/qBittorrent.conf"
+  [[ $I_HOME_NEW == 1 || ! -e $f ]] || return 0
+  mkdir -p "$(dirname "$f")"
+  cat > "$f" <<'QBEOF'
+[Core]
+AutoDeleteAddedTorrentFile=Always
+
+[GUI]
+MainWindow\FiltersSidebarVisible=false
+
+[LegalNotice]
+Accepted=true
+
+[Preferences]
+Downloads\DblClOnTorDl=1
+QBEOF
+  chown -R "$I_USER:$I_USER" "/home/$I_USER/.config/qBittorrent" 2>/dev/null
+}
+
 # git_ext <uuid> <git-url> [célmappa]: GNOME-bővítmény telepítése GitHubról (rendszerszinten)
 git_ext() {
   local uuid=$1 url=$2 base=${3:-/usr/share/gnome-shell/extensions} tmp
@@ -1563,12 +1611,23 @@ build_ext() {
 install_max_refresh() {
   cat > /usr/local/bin/set-max-refresh <<'PYEOF2'
 #!/usr/bin/env python3
-"""A monitorokat az aktuális felbontás legnagyobb elérhető frissítési frekvenciájára állítja.
-GNOME: Mutter DisplayConfig (D-Bus), egyszer, tartósan. Más környezet (X11): xrandr, minden belépéskor."""
-import os, re, subprocess, sys, time
+"""A monitorokat az aktuális felbontás legnagyobb elérhető frissítési frekvenciájára állítja (pl. 144 Hz).
+GNOME: Mutter DisplayConfig (D-Bus) | KDE: kscreen-doctor | egyéb (X11): xrandr. Minden belépéskor lefut;
+ha már a legnagyobb a frissítés, nem változtat. Napló: ~/.cache/set-max-refresh.log"""
+import json, os, re, subprocess, sys, time
+
+LOG = os.path.expanduser('~/.cache/set-max-refresh.log')
+
+def log(*a):
+    try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, 'a') as f:
+            f.write(time.strftime('%F %T ') + ' '.join(str(x) for x in a) + '\n')
+    except Exception:
+        pass
 
 def plan(monitors):
-    """-> {connector: mode_id} csak ott, ahol van gyorsabb mód ugyanazon a felbontáson"""
+    """GNOME: -> {connector: mode_id} csak ott, ahol van gyorsabb mód ugyanazon a felbontáson"""
     out = {}
     for spec, modes, _p in monitors:
         cur = next((m for m in modes if m[6].get('is-current')), None)
@@ -1580,11 +1639,24 @@ def plan(monitors):
             out[spec[0]] = best[0]
     return out
 
+def kde_plan(data):
+    """KDE (kscreen-doctor -j): -> [(kimenet, mód-azonosító)]"""
+    res = []
+    for o in data.get('outputs', []):
+        if not o.get('enabled'):
+            continue
+        modes = o.get('modes', [])
+        cur = next((m for m in modes if m.get('id') == o.get('currentModeId')), None)
+        if not cur:
+            continue
+        same = [m for m in modes if m.get('size') == cur.get('size')]
+        best = max(same, key=lambda m: m.get('refreshRate', 0))
+        if best.get('refreshRate', 0) > cur.get('refreshRate', 0) + 0.5:
+            res.append((o['name'], best['id']))
+    return res
+
 def gnome():
     from gi.repository import Gio, GLib
-    marker = os.path.expanduser('~/.cache/set-max-refresh.done')
-    if os.path.exists(marker):
-        return 0
     proxy = None
     for _ in range(30):
         try:
@@ -1596,21 +1668,41 @@ def gnome():
                 'GetCurrentState', None, Gio.DBusCallFlags.NONE, -1, None).unpack()
             if monitors:
                 break
+        except Exception as e:
+            log('GNOME: várakozás a Mutterre:', e)
+        time.sleep(2)
+    else:
+        log('GNOME: a Mutter nem érhető el'); return 1
+    for spec, modes, _p in monitors:
+        log('monitor', spec[0], 'módok:', sorted({round(m[3], 1) for m in modes}, reverse=True)[:8])
+    choice = plan(monitors)
+    log('terv:', choice)
+    if not choice:
+        return 0
+    cur_mode = {s[0]: next((mo[0] for mo in ms if mo[6].get('is-current')), '') for s, ms, _ in monitors}
+    lms = [(lm[0], lm[1], lm[2], lm[3], lm[4],
+            [(m[0], choice.get(m[0], cur_mode.get(m[0], '')), {}) for m in lm[5]], {}) for lm in logicals]
+    arg = GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', (serial, 2, lms, {}))
+    proxy.call_sync('ApplyMonitorsConfig', arg, Gio.DBusCallFlags.NONE, -1, None)
+    log('beállítva')
+    return 0
+
+def kde():
+    for _ in range(15):
+        r = subprocess.run(['kscreen-doctor', '-j'], capture_output=True, text=True)
+        try:
+            data = json.loads(r.stdout)
+            if data.get('outputs'):
+                break
         except Exception:
             pass
         time.sleep(2)
     else:
-        return 1
-    choice = plan(monitors)
-    if choice:
-        lms = [(lm[0], lm[1], lm[2], lm[3], lm[4],
-                [(m[0], choice.get(m[0], next((mo[0] for s, ms, _ in monitors if s[0] == m[0]
-                                                for mo in ms if mo[6].get('is-current')), '')), {})
-                 for m in lm[5]], {}) for lm in logicals]
-        arg = GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', (serial, 2, lms, {}))
-        proxy.call_sync('ApplyMonitorsConfig', arg, Gio.DBusCallFlags.NONE, -1, None)
-    os.makedirs(os.path.dirname(marker), exist_ok=True)
-    open(marker, 'w').close()
+        log('KDE: a kscreen-doctor nem ad kimenetet'); return 1
+    todo = kde_plan(data)
+    log('KDE terv:', todo)
+    for name, mid in todo:
+        subprocess.run(['kscreen-doctor', f'output.{name}.mode.{mid}'])
     return 0
 
 def xrandr():
@@ -1634,6 +1726,7 @@ def xrandr():
             continue
         best = max(((float(re.sub(r'[^0-9.]', '', t)), r[0]) for r in rows if r[0] == cur[0] for t in r[1:]
                     if re.sub(r'[^0-9.]', '', t)), default=None)
+        log('xrandr', o, 'jelenlegi', cur, 'legjobb', best)
         if best and best[0] > cur[1] + 0.5:
             subprocess.run(['xrandr', '--output', o, '--mode', cur[0], '--rate', str(best[0])])
     return 0
@@ -1641,9 +1734,15 @@ def xrandr():
 if __name__ == '__main__':
     try:
         de = os.environ.get('XDG_CURRENT_DESKTOP', '')
-        sys.exit(gnome() if 'GNOME' in de else xrandr())
+        if 'GNOME' in de:
+            rc = gnome()
+        elif 'KDE' in de and os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+            rc = kde()
+        else:
+            rc = xrandr()
+        sys.exit(rc)
     except Exception as e:
-        print('set-max-refresh:', e, file=sys.stderr)
+        log('HIBA:', repr(e))
         sys.exit(0)
 PYEOF2
   chmod +x /usr/local/bin/set-max-refresh
@@ -1653,7 +1752,7 @@ PYEOF2
 Type=Application
 Name=Legnagyobb képfrissítés
 Exec=/usr/local/bin/set-max-refresh
-OnlyShowIn=GNOME;XFCE;
+OnlyShowIn=GNOME;XFCE;KDE;
 NoDisplay=true
 EOF
 }
@@ -1798,7 +1897,7 @@ EOF
     fi
     fc-list 2>/dev/null | grep -qi oxanium && echo "font-name='Oxanium @wght=400 $ui_sz'"
     fc-list 2>/dev/null | grep -qi 'JetBrains Mono' && echo "document-font-name='JetBrains Mono Light @wght=300 $doc_sz'"
-    fc-list 2>/dev/null | grep -qi 'Fira Code' && echo "monospace-font-name='Fira Code @wght=700 $mono_sz'"
+    fc-list 2>/dev/null | grep -qi 'Fira Code' && echo "monospace-font-name='Fira Code $mono_sz'"
     if [[ -d /usr/share/themes/Win12X-Fantasy-Dark-Compact ]]; then
       printf "\n[org/gnome/shell/extensions/user-theme]\nname='Win12X-Fantasy-Dark-Compact'\n"
     fi
@@ -2174,6 +2273,8 @@ phase2() {
   [[ $I_DE == xfce ]] && xfce_user_setup "$pic_dir"
   [[ $I_DE != none ]] && glava_setup
   audacious_skin
+  firefox_addons
+  qbittorrent_setup
   godot_android_setup
   has terep2 && install_terep2
   has solidcraft && install_solidcraft
